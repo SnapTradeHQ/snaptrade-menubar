@@ -17,14 +17,40 @@ Scripts/package_app.sh debug
 open ".build/SnapTrade Menu Bar.app"
 ```
 
+## Release
+
+To create a local unsigned `.dmg` for testing the installer layout:
+
+```sh
+Scripts/release_app.sh --unsigned
+```
+
+To create a distributable release for users, install a Developer ID Application
+certificate and run:
+
+```sh
+export DEVELOPER_ID_APPLICATION="Developer ID Application: SnapTrade Inc. (TEAMID)"
+export NOTARYTOOL_PROFILE="snaptrade-notary"
+Scripts/release_app.sh
+```
+
+Create the notary profile once with:
+
+```sh
+xcrun notarytool store-credentials snaptrade-notary
+```
+
+The release script builds the app, signs it with hardened runtime, creates a
+`.dmg`, submits it for notarization, staples the notarization ticket, and writes
+the final artifact to `.build/release-artifacts/`.
+
 The app uses SwiftUI `MenuBarExtra`, authorization code + PKCE, a loopback callback server, Keychain token storage, and `URLSession` for API calls.
-It also supports RFC 8628 device-code OAuth when the selected SnapTrade environment advertises `device_authorization_endpoint` in its OAuth metadata.
 
 Debug builds store OAuth tokens in app preferences to avoid repeated macOS Keychain prompts after every unsigned rebuild. Release builds use macOS Keychain.
 
 ## Configuration
 
-Settings are editable in the menu. Environment variables can provide initial values:
+The app does not expose editable settings. Developers can override build defaults with environment variables:
 
 - `SNAPTRADE_CLIENT_ID`
 - `SNAPTRADE_AUTHORIZE_URL`
@@ -40,7 +66,7 @@ By default, production OAuth endpoints are discovered from:
 https://api.snaptrade.com/.well-known/oauth-authorization-server/mcp
 ```
 
-The current published metadata advertises:
+The app relies on these values from the current published metadata:
 
 - authorization endpoint: `https://dashboard.snaptrade.com/oauth/authorize`
 - token endpoint: `https://api.snaptrade.com/oauth/token/`
@@ -48,7 +74,6 @@ The current published metadata advertises:
 - registration endpoint: `https://api.snaptrade.com/oauth/register/`
 - scope: `read`
 - grant types: `authorization_code`, `refresh_token`
-- device grant type: `urn:ietf:params:oauth:grant-type:device_code`
 - PKCE method: `S256`
 
 The OAuth redirect URI is either a dynamic loopback URL or `http://127.0.0.1:18787/oauth/callback`.

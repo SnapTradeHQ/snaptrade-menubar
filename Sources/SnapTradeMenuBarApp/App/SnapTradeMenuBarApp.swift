@@ -8,5 +8,8 @@ struct SnapTradeMenuBarApp: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            CommandGroup(replacing: .appSettings) { }
+        }
     }
 }

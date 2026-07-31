@@ -17,16 +17,16 @@ final class SnapTradeClient {
         try await get(path: "/accounts", accessToken: accessToken)
     }
 
-    func balances(accountID: String, accessToken: String) async throws -> [MoneyValue] {
-        try await get(path: "/accounts/\(accountID)/balances", accessToken: accessToken)
-    }
-
     func positions(accountID: String, accessToken: String) async throws -> [SnapTradePosition] {
         let response: AllAccountPositionsResponse = try await get(
             path: "/accounts/\(accountID)/positions/all",
             accessToken: accessToken
         )
         return response.results
+    }
+
+    func authorizations(accessToken: String) async throws -> [SnapTradeAuthorization] {
+        try await get(path: "/authorizations", accessToken: accessToken)
     }
 
     private func get<T: Decodable>(path: String, accessToken: String) async throws -> T {

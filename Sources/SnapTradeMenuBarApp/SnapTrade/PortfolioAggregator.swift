@@ -1,5 +1,11 @@
 import Foundation
 
+enum PortfolioSyncProgress: Equatable {
+    case loadingAccounts
+    case accounts(completed: Int, total: Int)
+    case finalizing
+}
+
 @MainActor
 final class PortfolioAggregator {
     private let client: SnapTradeClient
@@ -11,14 +17,21 @@ final class PortfolioAggregator {
         self.marketDataProvider = marketDataProvider
     }
 
-    func fetchPortfolio(accessToken: String) async throws -> PortfolioSnapshot {
+    func fetchPortfolio(
+        accessToken: String,
+        progress: ((PortfolioSyncProgress) -> Void)? = nil
+    ) async throws -> PortfolioSnapshot {
+        progress?(.loadingAccounts)
         let accounts = try await client.accounts(accessToken: accessToken)
+        progress?(.accounts(completed: 0, total: accounts.count))
+        let disabledConnections = try? await disabledConnectionCount(accessToken: accessToken)
         var portfolioAccounts: [PortfolioAccount] = []
         var rawPositions: [AccountPosition] = []
 
-        for account in accounts {
+        for (index, account) in accounts.enumerated() {
             let detail = try await details(for: account, accessToken: accessToken)
             rawPositions.append(contentsOf: detail.positions.map { AccountPosition(accountID: account.id, position: $0) })
+            progress?(.accounts(completed: index + 1, total: accounts.count))
             let accountValue = detail.value
             guard let amount = accountValue.amount else { continue }
             portfolioAccounts.append(
@@ -37,6 +50,7 @@ final class PortfolioAggregator {
             .map(\.value)
             .reduce(Decimal(0), +)
 
+        progress?(.finalizing)
         let aggregatedPortfolio = await aggregatePositions(rawPositions, total: total)
 
         return PortfolioSnapshot(
@@ -47,39 +61,23 @@ final class PortfolioAggregator {
             dayChange: aggregatedPortfolio.dayChange,
             dayChangePercent: aggregatedPortfolio.dayChangePercent,
             marketSessionAt: aggregatedPortfolio.marketSessionAt,
+            disabledConnections: disabledConnections,
             updatedAt: Date()
         )
     }
 
     private func details(for account: SnapTradeAccount, accessToken: String) async throws -> AccountDetails {
-        var accountValue = account.bestBalanceValue
-
-        if accountValue == nil {
-            let balances = try? await client.balances(accountID: account.id, accessToken: accessToken)
-            accountValue = balances?.bestValue
-        }
-
         let positions = try await client.positions(accountID: account.id, accessToken: accessToken)
 
-        if accountValue == nil {
-            accountValue = value(from: positions)
-        }
-
         return AccountDetails(
-            value: accountValue ?? AccountValue(amount: nil, currency: displayCurrency),
+            value: account.balanceTotalValue ?? AccountValue(amount: nil, currency: displayCurrency),
             positions: positions
         )
     }
 
-    private func value(from positions: [SnapTradePosition]) -> AccountValue? {
-        let values = positions.compactMap(\.bestMarketValue)
-        guard !values.isEmpty else { return nil }
-        let currency = values.first?.currency ?? displayCurrency
-        let total = values
-            .filter { $0.currency == currency }
-            .compactMap(\.amount)
-            .reduce(Decimal(0), +)
-        return AccountValue(amount: total, currency: currency)
+    private func disabledConnectionCount(accessToken: String) async throws -> Int {
+        let authorizations = try await client.authorizations(accessToken: accessToken)
+        return authorizations.filter(\.isConnectionDisabled).count
     }
 
     private func aggregatePositions(_ positions: [AccountPosition], total: Decimal) async -> AggregatedPortfolio {
@@ -143,12 +141,8 @@ final class PortfolioAggregator {
             }
 
             let dayChange = groupedPositions
-                .map { $0.units * $0.multiplier * (quote.lastPrice - quote.openPrice) }
+                .map { $0.units * $0.multiplier * quote.dayChange }
                 .reduce(Decimal(0), +)
-            let openValue = groupedPositions
-                .map { $0.units * $0.multiplier * quote.openPrice }
-                .reduce(Decimal(0), +)
-            let dayChangePercent = openValue == Decimal(0) ? nil : dayChange / openValue
 
             return PortfolioPosition(
                 id: position.id,
@@ -161,7 +155,7 @@ final class PortfolioAggregator {
                 accountCount: position.accountCount,
                 percentOfPortfolio: position.percentOfPortfolio,
                 dayChange: dayChange,
-                dayChangePercent: dayChangePercent
+                dayChangePercent: quote.dayChangePercent
             )
         }
 
@@ -231,25 +225,9 @@ private struct AggregatablePosition {
 }
 
 private extension SnapTradeAccount {
-    var bestBalanceValue: AccountValue? {
-        if let balanceValue = balance?.bestValue {
-            return balanceValue
-        }
-        return balances?.bestValue
-    }
-}
-
-private extension Array where Element == MoneyValue {
-    var bestValue: AccountValue? {
-        compactMap(\.bestValue).first
-    }
-}
-
-private extension MoneyValue {
-    var bestValue: AccountValue? {
-        let amount = amount ?? value ?? total ?? cash
-        guard amount != nil else { return nil }
-        return AccountValue(amount: amount, currency: currency)
+    var balanceTotalValue: AccountValue? {
+        guard let total = balance?.total else { return nil }
+        return AccountValue(amount: total, currency: balance?.currency)
     }
 }
 

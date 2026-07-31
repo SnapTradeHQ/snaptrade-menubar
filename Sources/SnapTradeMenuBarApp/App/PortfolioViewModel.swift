@@ -12,26 +12,20 @@ final class PortfolioViewModel: ObservableObject {
         case connected(PortfolioSnapshot)
         case stale(PortfolioSnapshot, String)
         case reconnectNeeded(String)
-        case waitingForDeviceApproval(DeviceAuthorizationDisplay)
         case error(String)
     }
 
     @Published private(set) var state: ViewState = .disconnected
     @Published private(set) var isRefreshing = false
-    @Published var config: AppConfig {
-        didSet {
-            config.save()
-            rebuildServices()
-        }
-    }
+    @Published private(set) var syncProgress: PortfolioSyncProgress?
 
+    private let config: AppConfig
     private var tokenStore: TokenStore
     private var authProvider: OAuthProvider
     private var client: SnapTradeClient
     private var aggregator: PortfolioAggregator
     private var snapshotCache: PortfolioSnapshotCache
     private var scheduler: Scheduler?
-    private var settingsWindow: NSWindow?
     private var currentTokenSet: TokenSet?
     private var hasStarted = false
 
@@ -44,7 +38,6 @@ final class PortfolioViewModel: ObservableObject {
         self.client = SnapTradeClient(config: config)
         self.aggregator = PortfolioAggregator(client: client)
         self.snapshotCache = Self.makeSnapshotCache(config: config)
-        self.authProvider = makeOAuthProvider(config: config)
     }
 
     var menuBarTitle: String {
@@ -57,8 +50,6 @@ final class PortfolioViewModel: ObservableObject {
             return "Reconnect"
         case .error:
             return "Error"
-        case .waitingForDeviceApproval:
-            return "Approve"
         case .disconnected:
             return "SnapTrade"
         }
@@ -70,7 +61,7 @@ final class PortfolioViewModel: ObservableObject {
             return "dollarsign.circle"
         case .stale, .error, .reconnectNeeded:
             return "exclamationmark.triangle"
-        case .loading, .waitingForDeviceApproval:
+        case .loading:
             return "arrow.triangle.2.circlepath"
         case .disconnected:
             return "dollarsign.circle"
@@ -89,8 +80,6 @@ final class PortfolioViewModel: ObservableObject {
             return "stale"
         case .reconnectNeeded:
             return "reconnect-needed"
-        case .waitingForDeviceApproval:
-            return "waiting-for-device-approval"
         case .error:
             return "error"
         }
@@ -110,8 +99,6 @@ final class PortfolioViewModel: ObservableObject {
             try tokenStore.save(tokenSet)
             currentTokenSet = tokenSet
             await refreshPortfolio(forceTokenRefresh: false)
-        } catch let error as DeviceAuthorizationPendingError {
-            state = .waitingForDeviceApproval(error.display)
         } catch {
             state = .error(error.localizedDescription)
         }
@@ -137,35 +124,17 @@ final class PortfolioViewModel: ObservableObject {
         state = .disconnected
     }
 
-    func showSettings() {
-        if let settingsWindow {
-            settingsWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "SnapTrade Settings"
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(viewModel: self))
-        settingsWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
     func relaunch() {
         let bundleURL = Bundle.main.bundleURL
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = [bundleURL.path]
-        try? task.run()
-        NSApp.terminate(nil)
+        task.arguments = ["-n", bundleURL.path]
+        do {
+            try task.run()
+            NSApp.terminate(nil)
+        } catch {
+            state = .error("Could not relaunch the app: \(error.localizedDescription)")
+        }
     }
 
     private func loadStoredSession() async {
@@ -203,7 +172,11 @@ final class PortfolioViewModel: ObservableObject {
 
         let previousSnapshot = currentSnapshot
         isRefreshing = true
-        defer { isRefreshing = false }
+        syncProgress = .loadingAccounts
+        defer {
+            isRefreshing = false
+            syncProgress = nil
+        }
 
         if previousSnapshot == nil {
             state = .loading("Refreshing portfolio...")
@@ -217,14 +190,14 @@ final class PortfolioViewModel: ObservableObject {
             }
 
             do {
-                let snapshot = try await aggregator.fetchPortfolio(accessToken: tokenSet.accessToken)
+                let snapshot = try await fetchSnapshot(accessToken: tokenSet.accessToken)
                 snapshotCache.save(snapshot)
                 state = .connected(snapshot)
             } catch SnapTradeClientError.unauthorized {
                 tokenSet = try await authProvider.refresh(tokenSet)
                 try tokenStore.save(tokenSet)
                 currentTokenSet = tokenSet
-                let snapshot = try await aggregator.fetchPortfolio(accessToken: tokenSet.accessToken)
+                let snapshot = try await fetchSnapshot(accessToken: tokenSet.accessToken)
                 snapshotCache.save(snapshot)
                 state = .connected(snapshot)
             }
@@ -248,6 +221,12 @@ final class PortfolioViewModel: ObservableObject {
         }
     }
 
+    private func fetchSnapshot(accessToken: String) async throws -> PortfolioSnapshot {
+        try await aggregator.fetchPortfolio(accessToken: accessToken) { [weak self] progress in
+            self?.syncProgress = progress
+        }
+    }
+
     private func startScheduler() {
         scheduler?.cancel()
         scheduler = Scheduler(interval: config.refreshInterval.seconds) { [weak self] in
@@ -256,15 +235,6 @@ final class PortfolioViewModel: ObservableObject {
             }
         }
         scheduler?.start()
-    }
-
-    private func rebuildServices() {
-        tokenStore = Self.makeTokenStore(config: config)
-        authProvider = makeOAuthProvider(config: config)
-        client = SnapTradeClient(config: config)
-        aggregator = PortfolioAggregator(client: client)
-        snapshotCache = Self.makeSnapshotCache(config: config)
-        startScheduler()
     }
 
     private static func makeTokenStore(config: AppConfig) -> TokenStore {
@@ -276,16 +246,7 @@ final class PortfolioViewModel: ObservableObject {
     }
 
     private static func makeSnapshotCache(config: AppConfig) -> PortfolioSnapshotCache {
-        PortfolioSnapshotCache(key: "SnapTradeMenuBar.PortfolioSnapshot.\(config.environment.rawValue)")
-    }
-
-    private func makeOAuthProvider(config: AppConfig) -> OAuthProvider {
-        if config.authFlow == .deviceCode {
-            return DeviceCodeProvider(config: config) { [weak self] display in
-                self?.state = .waitingForDeviceApproval(display)
-            }
-        }
-        return AuthorizationCodePKCEProvider(config: config)
+        PortfolioSnapshotCache(key: "SnapTradeMenuBar.PortfolioSnapshot.v2.\(config.environment.rawValue)")
     }
 
 }

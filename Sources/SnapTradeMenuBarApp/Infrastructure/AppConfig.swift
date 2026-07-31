@@ -3,7 +3,6 @@ import Foundation
 struct AppConfig: Codable, Equatable {
     var environment: SnapTradeEnvironment
     var clientID: String
-    var authFlow: AuthFlow
     var redirectMode: RedirectMode
     var refreshInterval: RefreshInterval
     var scope: String
@@ -16,8 +15,17 @@ struct AppConfig: Codable, Equatable {
     static func load() -> AppConfig {
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let config = try? JSONDecoder().decode(AppConfig.self, from: data) {
-            return config.withDefaultDemoValues().withEnvironmentOverrides()
+            var loadedConfig = config.withDefaultDemoValues()
+            if !UserDefaults.standard.bool(forKey: hourlyRefreshMigrationKey) {
+                if loadedConfig.refreshInterval == .fifteenMinutes {
+                    loadedConfig.refreshInterval = .oneHour
+                    loadedConfig.save()
+                }
+                UserDefaults.standard.set(true, forKey: hourlyRefreshMigrationKey)
+            }
+            return loadedConfig.withEnvironmentOverrides()
         }
+        UserDefaults.standard.set(true, forKey: hourlyRefreshMigrationKey)
         return AppConfig.defaults.withDefaultDemoValues().withEnvironmentOverrides()
     }
 
@@ -67,25 +75,25 @@ struct AppConfig: Codable, Equatable {
             issuer: environment.defaultOAuthIssuer,
             authorizationEndpoint: authorizationEndpoint,
             tokenEndpoint: tokenEndpoint,
-            deviceAuthorizationEndpoint: environment.defaultDeviceAuthorizationEndpoint,
+            deviceAuthorizationEndpoint: nil,
             revocationEndpoint: revokeEndpoint.isEmpty ? nil : revokeEndpoint,
             registrationEndpoint: environment.defaultRegistrationEndpoint,
             scopesSupported: ["read"],
-            grantTypesSupported: ["authorization_code", "refresh_token", OAuthGrantTypes.deviceCode],
+            grantTypesSupported: ["authorization_code", "refresh_token"],
             codeChallengeMethodsSupported: ["S256"],
             tokenEndpointAuthMethodsSupported: ["none"]
         )
     }
 
     private static let storageKey = "SnapTradeMenuBar.AppConfig.v1"
+    private static let hourlyRefreshMigrationKey = "SnapTradeMenuBar.HourlyRefreshMigration.v1"
     private static let defaultClientID = "OqgWgrKIfojI7ZhONa0xe8fRuqMuvKKE7Grn3H5r"
 
     static let defaults = AppConfig(
         environment: .production,
         clientID: defaultClientID,
-        authFlow: .authorizationCodePKCE,
         redirectMode: .fixed18787,
-        refreshInterval: .fifteenMinutes,
+        refreshInterval: .oneHour,
         scope: "read",
         authorizationEndpoint: SnapTradeEnvironment.production.defaultAuthorizationEndpoint,
         tokenEndpoint: SnapTradeEnvironment.production.defaultTokenEndpoint,
@@ -166,33 +174,11 @@ enum SnapTradeEnvironment: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    var defaultDeviceAuthorizationEndpoint: String {
-        switch self {
-        case .production: return "https://api.snaptrade.com/oauth/device_authorization/"
-        case .staging: return "https://api.staging.snaptrade.com/oauth/device_authorization/"
-        case .local: return "http://127.0.0.1:8888/oauth/device_authorization/"
-        }
-    }
-
     var defaultAPIBaseURL: String {
         switch self {
         case .production: return "https://api.snaptrade.com/api/v1"
         case .staging: return "https://api.staging.snaptrade.com/api/v1"
         case .local: return "http://127.0.0.1:8888/api/v1"
-        }
-    }
-}
-
-enum AuthFlow: String, Codable, CaseIterable, Identifiable {
-    case authorizationCodePKCE
-    case deviceCode
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .authorizationCodePKCE: return "Authorization Code + PKCE"
-        case .deviceCode: return "Device Code"
         }
     }
 }
@@ -222,6 +208,7 @@ enum RefreshInterval: String, Codable, CaseIterable, Identifiable {
     case fiveMinutes
     case fifteenMinutes
     case thirtyMinutes
+    case oneHour
 
     var id: String { rawValue }
 
@@ -230,6 +217,7 @@ enum RefreshInterval: String, Codable, CaseIterable, Identifiable {
         case .fiveMinutes: return "5 min"
         case .fifteenMinutes: return "15 min"
         case .thirtyMinutes: return "30 min"
+        case .oneHour: return "1 hour"
         }
     }
 
@@ -238,6 +226,7 @@ enum RefreshInterval: String, Codable, CaseIterable, Identifiable {
         case .fiveMinutes: return 300
         case .fifteenMinutes: return 900
         case .thirtyMinutes: return 1800
+        case .oneHour: return 3600
         }
     }
 }

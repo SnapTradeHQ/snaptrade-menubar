@@ -64,7 +64,7 @@ final class StatusItemController: NSObject {
         switch viewModel.state {
         case .connected(let current), .stale(let current, _):
             snapshot = current
-        case .disconnected, .loading, .reconnectNeeded, .waitingForDeviceApproval, .error:
+        case .disconnected, .loading, .reconnectNeeded, .error:
             return nil
         }
 

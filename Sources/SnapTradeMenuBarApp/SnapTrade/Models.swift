@@ -8,7 +8,55 @@ struct PortfolioSnapshot: Codable, Equatable {
     let dayChange: Decimal?
     let dayChangePercent: Decimal?
     let marketSessionAt: Date?
+    let disabledConnections: Int?
     let updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case totalValue
+        case currency
+        case accounts
+        case positions
+        case dayChange
+        case dayChangePercent
+        case marketSessionAt
+        case disabledConnections
+        case updatedAt
+    }
+
+    init(
+        totalValue: Decimal,
+        currency: String,
+        accounts: [PortfolioAccount],
+        positions: [PortfolioPosition],
+        dayChange: Decimal?,
+        dayChangePercent: Decimal?,
+        marketSessionAt: Date?,
+        disabledConnections: Int?,
+        updatedAt: Date
+    ) {
+        self.totalValue = totalValue
+        self.currency = currency
+        self.accounts = accounts
+        self.positions = positions
+        self.dayChange = dayChange
+        self.dayChangePercent = dayChangePercent
+        self.marketSessionAt = marketSessionAt
+        self.disabledConnections = disabledConnections
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.totalValue = try container.decode(Decimal.self, forKey: .totalValue)
+        self.currency = try container.decode(String.self, forKey: .currency)
+        self.accounts = try container.decode([PortfolioAccount].self, forKey: .accounts)
+        self.positions = try container.decode([PortfolioPosition].self, forKey: .positions)
+        self.dayChange = try container.decodeIfPresent(Decimal.self, forKey: .dayChange)
+        self.dayChangePercent = try container.decodeIfPresent(Decimal.self, forKey: .dayChangePercent)
+        self.marketSessionAt = try container.decodeIfPresent(Date.self, forKey: .marketSessionAt)
+        self.disabledConnections = try container.decodeIfPresent(Int.self, forKey: .disabledConnections)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 
     var formattedTotal: String {
         CurrencyFormatter.format(totalValue, currency: currency)
@@ -66,7 +114,7 @@ struct PortfolioPosition: Codable, Identifiable, Equatable {
 
     var formattedDayChangePercent: String? {
         guard let dayChangePercent else { return nil }
-        return PercentFormatter.format(dayChangePercent)
+        return PercentFormatter.format(dayChangePercent, maximumFractionDigits: 2)
     }
 }
 
@@ -81,10 +129,10 @@ enum CurrencyFormatter {
 }
 
 enum PercentFormatter {
-    static func format(_ value: Decimal) -> String {
+    static func format(_ value: Decimal, maximumFractionDigits: Int = 1) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .percent
-        formatter.maximumFractionDigits = 1
+        formatter.maximumFractionDigits = maximumFractionDigits
         return formatter.string(from: value as NSDecimalNumber) ?? "\(value)"
     }
 }
@@ -114,6 +162,56 @@ struct SnapTradeAccount: Decodable {
         self.institutionName = try container.decodeIfPresent(String.self, forKey: .institutionName)
         self.balance = try container.decodeIfPresent(MoneyValue.self, forKey: .balance)
         self.balances = try container.decodeIfPresent([MoneyValue].self, forKey: .balances)
+    }
+}
+
+struct SnapTradeAuthorization: Decodable {
+    let disabled: Bool?
+    let isDisabled: Bool?
+    let status: String?
+    let connectionStatus: String?
+    let disabledAt: String?
+    let disabledDate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case disabled
+        case isDisabled = "is_disabled"
+        case isDisabledCamel = "isDisabled"
+        case status
+        case connectionStatus = "connection_status"
+        case connectionStatusCamel = "connectionStatus"
+        case disabledAt = "disabled_at"
+        case disabledAtCamel = "disabledAt"
+        case disabledDate = "disabled_date"
+        case disabledDateCamel = "disabledDate"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.disabled = try container.decodeIfPresent(Bool.self, forKey: .disabled)
+        self.isDisabled = try container.decodeIfPresent(Bool.self, forKey: .isDisabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .isDisabledCamel)
+        self.status = try container.decodeIfPresent(String.self, forKey: .status)
+        self.connectionStatus = try container.decodeIfPresent(String.self, forKey: .connectionStatus)
+            ?? container.decodeIfPresent(String.self, forKey: .connectionStatusCamel)
+        self.disabledAt = try container.decodeIfPresent(String.self, forKey: .disabledAt)
+            ?? container.decodeIfPresent(String.self, forKey: .disabledAtCamel)
+        self.disabledDate = try container.decodeIfPresent(String.self, forKey: .disabledDate)
+            ?? container.decodeIfPresent(String.self, forKey: .disabledDateCamel)
+    }
+
+    var isConnectionDisabled: Bool {
+        if disabled == true || isDisabled == true {
+            return true
+        }
+
+        let statusValue = status ?? connectionStatus
+        if let statusValue,
+           ["disabled", "inactive", "deleted"].contains(statusValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+            return true
+        }
+
+        return disabledAt != nil || disabledDate != nil
     }
 }
 

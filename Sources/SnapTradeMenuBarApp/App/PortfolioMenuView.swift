@@ -5,6 +5,7 @@ struct PortfolioMenuView: View {
     var close: () -> Void = {}
 
     private let panelWidth: CGFloat = 340
+    private let dashboardURL = URL(string: "https://dashboard.snaptrade.com/")!
 
     var body: some View {
         VStack(alignment: .leading, spacing: contentSpacing) {
@@ -27,13 +28,77 @@ struct PortfolioMenuView: View {
                         Text("SnapTrade Portfolio")
                             .font(.headline)
                     }
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    subtitleView
                 }
             }
             Spacer()
             headerControls
+        }
+    }
+
+    @ViewBuilder
+    private var subtitleView: some View {
+        switch viewModel.state {
+        case .connected(let snapshot):
+            if viewModel.isRefreshing {
+                syncProgressView(fallbackMessage: "Syncing latest portfolio...")
+            } else {
+                timestampSubtitle("Last updated \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))", snapshot: snapshot)
+            }
+        case .stale(let snapshot, _):
+            if viewModel.isRefreshing {
+                syncProgressView(fallbackMessage: "Retrying portfolio sync...")
+            } else {
+                timestampSubtitle("Showing last value from \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))", snapshot: snapshot)
+            }
+        case .loading:
+            if viewModel.isRefreshing {
+                syncProgressView(fallbackMessage: "Syncing latest portfolio...")
+            } else {
+                subtitleText(subtitle)
+            }
+        default:
+            subtitleText(subtitle)
+        }
+    }
+
+    private func syncProgressView(fallbackMessage: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                subtitleText(syncProgressLabel(fallback: fallbackMessage))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if case .accounts(let completed, let total) = viewModel.syncProgress, total > 0 {
+                    Text("\(completed) of \(total)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if case .accounts(let completed, let total) = viewModel.syncProgress, total > 0 {
+                ProgressView(value: Double(completed), total: Double(total))
+                    .accessibilityLabel("Portfolio sync progress")
+                    .accessibilityValue("\(completed) of \(total) accounts")
+            } else {
+                ProgressView()
+                    .accessibilityLabel(syncProgressLabel(fallback: fallbackMessage))
+            }
+        }
+        .progressViewStyle(.linear)
+        .controlSize(.small)
+        .frame(width: 210, alignment: .leading)
+    }
+
+    private func syncProgressLabel(fallback: String) -> String {
+        switch viewModel.syncProgress {
+        case .loadingAccounts:
+            return "Loading accounts..."
+        case .accounts:
+            return "Syncing latest portfolio..."
+        case .finalizing:
+            return "Updating market prices..."
+        case nil:
+            return fallback
         }
     }
 
@@ -55,11 +120,46 @@ struct PortfolioMenuView: View {
             return message
         case .reconnectNeeded:
             return "SnapTrade reconnect needed"
-        case .waitingForDeviceApproval:
-            return "Waiting for SnapTrade approval..."
         case .error:
             return "Refresh failed"
         }
+    }
+
+    private func disabledConnectionCount(_ snapshot: PortfolioSnapshot) -> Int? {
+        guard let disabledConnections = snapshot.disabledConnections,
+              disabledConnections > 0 else {
+            return nil
+        }
+        return disabledConnections
+    }
+
+    private func subtitleText(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func timestampSubtitle(_ text: String, snapshot: PortfolioSnapshot) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            subtitleText(text)
+
+            if let disabledConnections = disabledConnectionCount(snapshot) {
+                Text(" · ")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    NSWorkspace.shared.open(dashboardURL)
+                } label: {
+                    Text("\(disabledConnections) disabled")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .foregroundStyle(.link)
+                    .help("Open SnapTrade dashboard")
+            }
+        }
+        .lineLimit(1)
     }
 
     private var isLoading: Bool {
@@ -77,7 +177,7 @@ struct PortfolioMenuView: View {
         switch viewModel.state {
         case .connected, .disconnected, .loading:
             return false
-        case .stale, .reconnectNeeded, .waitingForDeviceApproval, .error:
+        case .stale, .reconnectNeeded, .error:
             return true
         }
     }
@@ -86,7 +186,7 @@ struct PortfolioMenuView: View {
         switch viewModel.state {
         case .disconnected:
             return false
-        case .connected, .loading, .stale, .reconnectNeeded, .waitingForDeviceApproval, .error:
+        case .connected, .loading, .stale, .reconnectNeeded, .error:
             return true
         }
     }
@@ -95,7 +195,7 @@ struct PortfolioMenuView: View {
         switch viewModel.state {
         case .connected:
             return 10
-        case .disconnected, .loading, .stale, .reconnectNeeded, .waitingForDeviceApproval, .error:
+        case .disconnected, .loading, .stale, .reconnectNeeded, .error:
             return 16
         }
     }
@@ -106,8 +206,7 @@ struct PortfolioMenuView: View {
         case .disconnected:
             disconnectedPrompt
         case .loading:
-            Text("Refreshing portfolio with SnapTrade...")
-                .foregroundStyle(.secondary)
+            EmptyView()
         case .connected(let snapshot):
             portfolio(snapshot)
         case .stale(let snapshot, let message):
@@ -115,15 +214,6 @@ struct PortfolioMenuView: View {
             portfolio(snapshot)
         case .reconnectNeeded(let message):
             errorBanner(title: "SnapTrade reconnect needed", message: message)
-        case .waitingForDeviceApproval(let display):
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Code: \(display.userCode)")
-                    .font(.title3.monospaced().weight(.semibold))
-                Text(display.verificationURI)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
         case .error(let message):
             errorBanner(title: "Refresh failed", message: message)
         }
@@ -206,6 +296,14 @@ struct PortfolioMenuView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
+
+                            if let formattedDayChangePercent = position.formattedDayChangePercent,
+                               let dayChange = position.dayChange {
+                                Text(formattedDayChangePercent)
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(dayChange >= Decimal(0) ? .green : .red)
+                                    .lineLimit(1)
+                            }
                         }
 
                         if let displayName = position.displayName, displayName != position.symbol {
@@ -222,20 +320,11 @@ struct PortfolioMenuView: View {
                         Text(position.formattedValue)
                             .font(.callout.monospacedDigit())
 
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            if let formattedDayChange = position.formattedDayChange,
-                               let formattedDayChangePercent = position.formattedDayChangePercent,
-                               let dayChange = position.dayChange {
-                                Text("\(formattedDayChange) \(formattedDayChangePercent)")
-                                    .foregroundStyle(dayChange >= Decimal(0) ? .green : .red)
-                            }
-
-                            if let formattedPercent = position.formattedPercent {
-                                Text(formattedPercent)
-                                    .foregroundStyle(.secondary)
-                            }
+                        if let formattedPercent = position.formattedPercent {
+                            Text(formattedPercent)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
                         }
-                        .font(.caption2.monospacedDigit())
                     }
                 }
             }
@@ -300,7 +389,7 @@ struct PortfolioMenuView: View {
             Menu {
                 menuActions
             } label: {
-                Image(systemName: "gearshape")
+                Image(systemName: "ellipsis.circle")
                     .imageScale(.large)
                     .frame(width: 24, height: 24)
             }
@@ -308,7 +397,7 @@ struct PortfolioMenuView: View {
             .menuIndicator(.hidden)
             .focusable(false)
             .fixedSize()
-            .help("Settings and actions")
+            .help("Actions")
         }
     }
 
@@ -317,7 +406,7 @@ struct PortfolioMenuView: View {
         switch viewModel.state {
         case .connected, .stale, .error:
             return true
-        case .disconnected, .loading, .reconnectNeeded, .waitingForDeviceApproval:
+        case .disconnected, .loading, .reconnectNeeded:
             return false
         }
     }
@@ -326,10 +415,6 @@ struct PortfolioMenuView: View {
     private var menuActions: some View {
         switch viewModel.state {
         case .disconnected:
-            Button("Settings") {
-                viewModel.showSettings()
-            }
-            Divider()
             Button("Relaunch") {
                 viewModel.relaunch()
             }
@@ -345,9 +430,6 @@ struct PortfolioMenuView: View {
                 Task { await viewModel.reconnect() }
             }
             Divider()
-            Button("Settings") {
-                viewModel.showSettings()
-            }
             Button("Disconnect", role: .destructive) {
                 closeMenu()
                 Task {
@@ -367,9 +449,6 @@ struct PortfolioMenuView: View {
                 Task { await viewModel.reconnect() }
             }
             Divider()
-            Button("Settings") {
-                viewModel.showSettings()
-            }
             Button("Disconnect", role: .destructive) {
                 closeMenu()
                 Task {
@@ -383,10 +462,7 @@ struct PortfolioMenuView: View {
             Button("Quit") {
                 NSApp.terminate(nil)
             }
-        case .loading, .waitingForDeviceApproval:
-            Button("Settings") {
-                viewModel.showSettings()
-            }
+        case .loading:
             Button("Disconnect", role: .destructive) {
                 closeMenu()
                 Task {

@@ -4,7 +4,8 @@ struct MarketQuote: Equatable {
     let symbol: String
     let currency: String?
     let lastPrice: Decimal
-    let openPrice: Decimal
+    let dayChange: Decimal
+    let dayChangePercent: Decimal
     let marketTime: Date?
 }
 
@@ -62,7 +63,7 @@ final class YahooFinanceMarketDataProvider: MarketDataProvider {
         var components = URLComponents(string: "https://query2.finance.yahoo.com/v7/finance/quote")
         components?.queryItems = [
             URLQueryItem(name: "symbols", value: yahooSymbols),
-            URLQueryItem(name: "fields", value: "symbol,regularMarketPrice,regularMarketOpen,regularMarketTime,currency"),
+            URLQueryItem(name: "fields", value: "symbol,regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketTime,currency"),
             URLQueryItem(name: "crumb", value: crumb),
         ]
         guard let url = components?.url else { return [:] }
@@ -87,15 +88,16 @@ final class YahooFinanceMarketDataProvider: MarketDataProvider {
         for pair in sanitizedPairs {
             guard let item = byYahooSymbol[pair.yahoo],
                   let lastPrice = item.regularMarketPrice,
-                  let openPrice = item.regularMarketOpen,
-                  openPrice != Decimal(0) else {
+                  let dayChange = item.dayChange(lastPrice: lastPrice),
+                  let dayChangePercent = item.dayChangePercent(lastPrice: lastPrice) else {
                 continue
             }
             quotes[pair.original] = MarketQuote(
                 symbol: pair.original,
                 currency: item.currency,
                 lastPrice: lastPrice,
-                openPrice: openPrice,
+                dayChange: dayChange,
+                dayChangePercent: dayChangePercent,
                 marketTime: item.regularMarketTime
             )
         }
@@ -173,14 +175,18 @@ private struct YahooQuoteResult: Decodable {
 private struct YahooQuoteItem: Decodable {
     let symbol: String?
     let regularMarketPrice: Decimal?
-    let regularMarketOpen: Decimal?
+    let regularMarketChange: Decimal?
+    let regularMarketChangePercent: Decimal?
+    let regularMarketPreviousClose: Decimal?
     let regularMarketTime: Date?
     let currency: String?
 
     enum CodingKeys: String, CodingKey {
         case symbol
         case regularMarketPrice
-        case regularMarketOpen
+        case regularMarketChange
+        case regularMarketChangePercent
+        case regularMarketPreviousClose
         case regularMarketTime
         case currency
     }
@@ -189,9 +195,30 @@ private struct YahooQuoteItem: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.symbol = try container.decodeIfPresent(String.self, forKey: .symbol)
         self.regularMarketPrice = try container.decodeIfPresent(Decimal.self, forKey: .regularMarketPrice)
-        self.regularMarketOpen = try container.decodeIfPresent(Decimal.self, forKey: .regularMarketOpen)
+        self.regularMarketChange = try container.decodeIfPresent(Decimal.self, forKey: .regularMarketChange)
+        self.regularMarketChangePercent = try container.decodeIfPresent(Decimal.self, forKey: .regularMarketChangePercent)
+        self.regularMarketPreviousClose = try container.decodeIfPresent(Decimal.self, forKey: .regularMarketPreviousClose)
         self.regularMarketTime = try container.decodeYahooDateIfPresent(forKey: .regularMarketTime)
         self.currency = try container.decodeIfPresent(String.self, forKey: .currency)
+    }
+
+    func dayChange(lastPrice: Decimal) -> Decimal? {
+        if let regularMarketChange {
+            return regularMarketChange
+        }
+        guard let regularMarketPreviousClose else { return nil }
+        return lastPrice - regularMarketPreviousClose
+    }
+
+    func dayChangePercent(lastPrice: Decimal) -> Decimal? {
+        if let regularMarketChangePercent {
+            return regularMarketChangePercent / Decimal(100)
+        }
+        guard let regularMarketPreviousClose,
+              regularMarketPreviousClose != Decimal(0) else {
+            return nil
+        }
+        return (lastPrice - regularMarketPreviousClose) / regularMarketPreviousClose
     }
 }
 

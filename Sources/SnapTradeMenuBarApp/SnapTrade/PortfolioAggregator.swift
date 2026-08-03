@@ -40,10 +40,12 @@ final class PortfolioAggregator {
         let disabledConnections = authorizations.filter(\.isConnectionDisabled).count
         var portfolioAccounts: [PortfolioAccount] = []
         var rawPositions: [AccountPosition] = []
+        var valuationInputs: [AccountValuationInput] = []
 
         for (index, account) in accounts.enumerated() {
             let detail = try await details(for: account, accessToken: accessToken)
             rawPositions.append(contentsOf: detail.positions.map { AccountPosition(accountID: account.id, position: $0) })
+            valuationInputs.append(AccountValuationInput(positions: detail.positions, balances: detail.balances))
             progress?(.accounts(completed: index + 1, total: accounts.count))
             let accountValue = detail.value
             guard let amount = accountValue.amount else { continue }
@@ -62,12 +64,17 @@ final class PortfolioAggregator {
             .filter { $0.currency == displayCurrency }
             .map(\.value)
             .reduce(Decimal(0), +)
+        let calculatedTotal = PortfolioValueCalculator.total(
+            accounts: valuationInputs,
+            currency: displayCurrency
+        )
 
         progress?(.finalizing)
         let aggregatedPortfolio = await aggregatePositions(rawPositions, total: total)
 
         return PortfolioSnapshot(
             totalValue: total,
+            calculatedValue: calculatedTotal,
             currency: displayCurrency,
             accounts: portfolioAccounts,
             positions: aggregatedPortfolio.positions,
@@ -81,10 +88,12 @@ final class PortfolioAggregator {
 
     private func details(for account: SnapTradeAccount, accessToken: String) async throws -> AccountDetails {
         let positions = try await client.positions(accountID: account.id, accessToken: accessToken)
+        let balances = try? await client.balances(accountID: account.id, accessToken: accessToken)
 
         return AccountDetails(
             value: account.balanceTotalValue ?? AccountValue(amount: nil, currency: displayCurrency),
-            positions: positions
+            positions: positions,
+            balances: balances
         )
     }
 
@@ -194,6 +203,43 @@ private struct EnrichedPortfolioPositions {
 private struct AccountDetails {
     let value: AccountValue
     let positions: [SnapTradePosition]
+    let balances: [MoneyValue]?
+}
+
+struct AccountValuationInput {
+    let positions: [SnapTradePosition]
+    let balances: [MoneyValue]?
+}
+
+enum PortfolioValueCalculator {
+    static func total(accounts: [AccountValuationInput], currency: String) -> Decimal? {
+        var total = Decimal(0)
+
+        for account in accounts {
+            guard let balances = account.balances else { return nil }
+
+            for balance in balances {
+                guard let cash = balance.cash,
+                      let balanceCurrency = balance.currency,
+                      balanceCurrency == currency else {
+                    return nil
+                }
+                total += cash
+            }
+
+            for position in account.positions where position.cashEquivalent != true {
+                guard let marketValue = position.bestMarketValue,
+                      let amount = marketValue.amount,
+                      let positionCurrency = marketValue.currency,
+                      positionCurrency == currency else {
+                    return nil
+                }
+                total += amount
+            }
+        }
+
+        return total
+    }
 }
 
 private struct AccountValue {

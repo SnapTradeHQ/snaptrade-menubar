@@ -28,6 +28,13 @@ final class SnapTradeClient {
         return response.results
     }
 
+    func balances(accountID: String, accessToken: String) async throws -> [MoneyValue] {
+        try await get(
+            path: "/accounts/\(accountID)/balances",
+            accessToken: accessToken
+        )
+    }
+
     func authorizations(accessToken: String) async throws -> [SnapTradeAuthorization] {
         try await get(path: "/authorizations", accessToken: accessToken)
     }

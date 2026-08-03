@@ -246,7 +246,7 @@ final class PortfolioViewModel: ObservableObject {
     }
 
     private static func makeSnapshotCache(config: AppConfig) -> PortfolioSnapshotCache {
-        PortfolioSnapshotCache(key: "SnapTradeMenuBar.PortfolioSnapshot.v2.\(config.environment.rawValue)")
+        PortfolioSnapshotCache(key: "SnapTradeMenuBar.PortfolioSnapshot.v3.\(config.environment.rawValue)")
     }
 
 }

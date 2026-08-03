@@ -2,6 +2,7 @@ import Foundation
 
 struct PortfolioSnapshot: Codable, Equatable {
     let totalValue: Decimal
+    let calculatedValue: Decimal?
     let currency: String
     let accounts: [PortfolioAccount]
     let positions: [PortfolioPosition]
@@ -13,6 +14,7 @@ struct PortfolioSnapshot: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case totalValue
+        case calculatedValue
         case currency
         case accounts
         case positions
@@ -25,6 +27,7 @@ struct PortfolioSnapshot: Codable, Equatable {
 
     init(
         totalValue: Decimal,
+        calculatedValue: Decimal?,
         currency: String,
         accounts: [PortfolioAccount],
         positions: [PortfolioPosition],
@@ -35,6 +38,7 @@ struct PortfolioSnapshot: Codable, Equatable {
         updatedAt: Date
     ) {
         self.totalValue = totalValue
+        self.calculatedValue = calculatedValue
         self.currency = currency
         self.accounts = accounts
         self.positions = positions
@@ -48,6 +52,7 @@ struct PortfolioSnapshot: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.totalValue = try container.decode(Decimal.self, forKey: .totalValue)
+        self.calculatedValue = try container.decodeIfPresent(Decimal.self, forKey: .calculatedValue)
         self.currency = try container.decode(String.self, forKey: .currency)
         self.accounts = try container.decode([PortfolioAccount].self, forKey: .accounts)
         self.positions = try container.decode([PortfolioPosition].self, forKey: .positions)
@@ -60,6 +65,25 @@ struct PortfolioSnapshot: Codable, Equatable {
 
     var formattedTotal: String {
         CurrencyFormatter.format(totalValue, currency: currency)
+    }
+
+    var formattedCalculatedTotal: String? {
+        guard let calculatedValue else { return nil }
+        return CurrencyFormatter.format(calculatedValue, currency: currency)
+    }
+
+    var formattedCalculatedDifference: String? {
+        guard let calculatedValue else { return nil }
+        let difference = calculatedValue - totalValue
+        let magnitude = difference < Decimal(0) ? -difference : difference
+        let formattedMagnitude = CurrencyFormatter.format(magnitude, currency: currency)
+        if difference > Decimal(0) {
+            return "+\(formattedMagnitude)"
+        }
+        if difference < Decimal(0) {
+            return "−\(formattedMagnitude)"
+        }
+        return formattedMagnitude
     }
 
     var formattedDayChangePercent: String? {

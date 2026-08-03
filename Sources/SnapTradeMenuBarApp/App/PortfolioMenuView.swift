@@ -248,12 +248,36 @@ struct PortfolioMenuView: View {
 
     private func portfolio(_ snapshot: PortfolioSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Total Assets")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(snapshot.formattedTotal)
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+
+                HStack(alignment: .top, spacing: 14) {
+                    totalAssetMetric(
+                        label: "Broker reported",
+                        value: snapshot.formattedTotal,
+                        accessibilityValue: snapshot.formattedTotal
+                    )
+
+                    totalAssetMetric(
+                        label: "Calculated",
+                        value: snapshot.formattedCalculatedTotal ?? "Unavailable",
+                        accessibilityValue: snapshot.formattedCalculatedTotal ?? "Unavailable"
+                    )
+                }
+
+                if let difference = snapshot.formattedCalculatedDifference {
+                    Text("Difference \(difference)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Difference between calculated and broker reported total")
+                        .accessibilityValue(difference)
+                } else {
+                    Text("Calculated value needs complete USD position and cash data")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             if !snapshot.positions.isEmpty || !snapshot.accounts.isEmpty {
@@ -278,6 +302,27 @@ struct PortfolioMenuView: View {
                 }
             }
         }
+    }
+
+    private func totalAssetMetric(
+        label: String,
+        value: String,
+        accessibilityValue: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(accessibilityValue)
     }
 
     private func positionList(_ positions: [PortfolioPosition]) -> some View {

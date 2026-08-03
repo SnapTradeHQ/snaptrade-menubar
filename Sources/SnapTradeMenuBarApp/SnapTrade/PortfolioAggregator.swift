@@ -22,9 +22,22 @@ final class PortfolioAggregator {
         progress: ((PortfolioSyncProgress) -> Void)? = nil
     ) async throws -> PortfolioSnapshot {
         progress?(.loadingAccounts)
-        let accounts = try await client.accounts(accessToken: accessToken)
+        let authorizations = try await client.authorizations(accessToken: accessToken)
+        var accounts: [SnapTradeAccount] = []
+        var seenAccountIDs: Set<String> = []
+
+        for authorization in authorizations {
+            let connectionAccounts = try await client.accounts(
+                authorizationID: authorization.id,
+                accessToken: accessToken
+            )
+            for account in connectionAccounts where seenAccountIDs.insert(account.id).inserted {
+                accounts.append(account)
+            }
+        }
+
         progress?(.accounts(completed: 0, total: accounts.count))
-        let disabledConnections = try? await disabledConnectionCount(accessToken: accessToken)
+        let disabledConnections = authorizations.filter(\.isConnectionDisabled).count
         var portfolioAccounts: [PortfolioAccount] = []
         var rawPositions: [AccountPosition] = []
 
@@ -73,11 +86,6 @@ final class PortfolioAggregator {
             value: account.balanceTotalValue ?? AccountValue(amount: nil, currency: displayCurrency),
             positions: positions
         )
-    }
-
-    private func disabledConnectionCount(accessToken: String) async throws -> Int {
-        let authorizations = try await client.authorizations(accessToken: accessToken)
-        return authorizations.filter(\.isConnectionDisabled).count
     }
 
     private func aggregatePositions(_ positions: [AccountPosition], total: Decimal) async -> AggregatedPortfolio {

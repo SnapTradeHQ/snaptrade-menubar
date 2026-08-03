@@ -14,6 +14,11 @@ let package = Package(
         .executableTarget(
             name: "SnapTradeMenuBarApp",
             path: "Sources/SnapTradeMenuBarApp"
+        ),
+        .testTarget(
+            name: "SnapTradeMenuBarAppTests",
+            dependencies: ["SnapTradeMenuBarApp"],
+            path: "Tests/SnapTradeMenuBarAppTests"
         )
     ]
 )

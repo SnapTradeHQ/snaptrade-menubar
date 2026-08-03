@@ -13,8 +13,11 @@ final class SnapTradeClient {
         self.decoder.keyDecodingStrategy = .useDefaultKeys
     }
 
-    func accounts(accessToken: String) async throws -> [SnapTradeAccount] {
-        try await get(path: "/accounts", accessToken: accessToken)
+    func accounts(authorizationID: String, accessToken: String) async throws -> [SnapTradeAccount] {
+        try await get(
+            path: "/authorizations/\(authorizationID)/accounts",
+            accessToken: accessToken
+        )
     }
 
     func positions(accountID: String, accessToken: String) async throws -> [SnapTradePosition] {

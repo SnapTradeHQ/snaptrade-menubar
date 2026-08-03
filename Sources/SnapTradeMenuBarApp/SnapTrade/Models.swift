@@ -166,6 +166,7 @@ struct SnapTradeAccount: Decodable {
 }
 
 struct SnapTradeAuthorization: Decodable {
+    let id: String
     let disabled: Bool?
     let isDisabled: Bool?
     let status: String?
@@ -174,6 +175,7 @@ struct SnapTradeAuthorization: Decodable {
     let disabledDate: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case disabled
         case isDisabled = "is_disabled"
         case isDisabledCamel = "isDisabled"
@@ -188,6 +190,7 @@ struct SnapTradeAuthorization: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeFlexibleString(forKey: .id)
         self.disabled = try container.decodeIfPresent(Bool.self, forKey: .disabled)
         self.isDisabled = try container.decodeIfPresent(Bool.self, forKey: .isDisabled)
             ?? container.decodeIfPresent(Bool.self, forKey: .isDisabledCamel)

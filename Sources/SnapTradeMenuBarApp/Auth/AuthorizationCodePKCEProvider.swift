@@ -90,7 +90,7 @@ final class AuthorizationCodePKCEProvider: OAuthProvider {
         _ = try? await session.data(for: request)
     }
 
-    private func buildAuthorizeURL(endpoint: String, redirectURI: String, state: String, codeChallenge: String) throws -> URL {
+    func buildAuthorizeURL(endpoint: String, redirectURI: String, state: String, codeChallenge: String) throws -> URL {
         guard let endpointURL = URL(string: endpoint) else {
             throw OAuthProviderError.invalidEndpoint
         }

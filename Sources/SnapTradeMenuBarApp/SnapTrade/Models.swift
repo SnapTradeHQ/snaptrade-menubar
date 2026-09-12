@@ -3,6 +3,8 @@ import Foundation
 struct PortfolioSnapshot: Codable, Equatable {
     let totalValue: Decimal
     let calculatedValue: Decimal?
+    let currencyTotals: [PortfolioCurrencyTotal]?
+    var missingAccountTotalCount: Int? = nil
     let currency: String
     let accounts: [PortfolioAccount]
     let positions: [PortfolioPosition]
@@ -15,6 +17,8 @@ struct PortfolioSnapshot: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case totalValue
         case calculatedValue
+        case missingAccountTotalCount
+        case currencyTotals
         case currency
         case accounts
         case positions
@@ -35,9 +39,13 @@ struct PortfolioSnapshot: Codable, Equatable {
         dayChangePercent: Decimal?,
         marketSessionAt: Date?,
         disabledConnections: Int?,
-        updatedAt: Date
+        updatedAt: Date,
+        currencyTotals: [PortfolioCurrencyTotal]? = nil,
+        missingAccountTotalCount: Int? = nil
     ) {
+        self.missingAccountTotalCount = missingAccountTotalCount
         self.totalValue = totalValue
+        self.currencyTotals = currencyTotals
         self.calculatedValue = calculatedValue
         self.currency = currency
         self.accounts = accounts
@@ -52,6 +60,8 @@ struct PortfolioSnapshot: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.totalValue = try container.decode(Decimal.self, forKey: .totalValue)
+        self.missingAccountTotalCount = try container.decodeIfPresent(Int.self, forKey: .missingAccountTotalCount)
+        self.currencyTotals = try container.decodeIfPresent([PortfolioCurrencyTotal].self, forKey: .currencyTotals)
         self.calculatedValue = try container.decodeIfPresent(Decimal.self, forKey: .calculatedValue)
         self.currency = try container.decode(String.self, forKey: .currency)
         self.accounts = try container.decode([PortfolioAccount].self, forKey: .accounts)
@@ -61,6 +71,18 @@ struct PortfolioSnapshot: Codable, Equatable {
         self.marketSessionAt = try container.decodeIfPresent(Date.self, forKey: .marketSessionAt)
         self.disabledConnections = try container.decodeIfPresent(Int.self, forKey: .disabledConnections)
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    var totalsByCurrency: [PortfolioCurrencyTotal] {
+        currencyTotals ?? [PortfolioCurrencyTotal(currency: currency, brokerReported: totalValue, calculated: calculatedValue)]
+    }
+
+    var visibleCurrencyTotals: [PortfolioCurrencyTotal] {
+        totalsByCurrency.filter { $0.hasNonzeroValue }
+    }
+
+    var hasMultipleCurrencies: Bool {
+        Set(totalsByCurrency.map(\.currency) + positions.map(\.currency)).count > 1
     }
 
     var formattedTotal: String {
@@ -90,6 +112,18 @@ struct PortfolioSnapshot: Codable, Equatable {
         guard let dayChangePercent else { return nil }
         return PercentFormatter.format(dayChangePercent)
     }
+}
+
+struct PortfolioCurrencyTotal: Codable, Equatable, Identifiable {
+    let currency: String
+    let brokerReported: Decimal?
+    let calculated: Decimal?
+    var comparisonUnavailableReason: String? = nil
+    var missingAccountCount: Int? = nil
+    var hasNonzeroValue: Bool {
+        (brokerReported ?? 0) != 0 || (calculated ?? 0) != 0
+    }
+    var id: String { currency }
 }
 
 struct PortfolioAccount: Codable, Identifiable, Equatable {

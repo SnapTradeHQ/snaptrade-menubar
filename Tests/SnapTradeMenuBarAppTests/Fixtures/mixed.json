@@ -1,0 +1,102 @@
+{
+  "/api/v1/authorizations": [
+    {
+      "id": "fixture-connection",
+      "disabled": false
+    }
+  ],
+  "/api/v1/accounts/fixture-cad": {
+    "id": "fixture-cad",
+    "name": "CAD sample account",
+    "institution_name": "Sample brokerage",
+    "balance": {
+      "total": {
+        "amount": 1200,
+        "currency": "CAD"
+      }
+    }
+  },
+  "/api/v1/accounts/fixture-cad/positions/all": {
+    "results": [
+      {
+        "instrument": {
+          "kind": "equity",
+          "id": "same-instrument",
+          "symbol": "SAMPLE-CAD",
+          "currency": "CAD"
+        },
+        "units": 10,
+        "price": 100,
+        "currency": "CAD"
+      }
+    ],
+    "data_freshness": {
+      "as_of": null
+    }
+  },
+  "/api/v1/accounts/fixture-cad/balances": [
+    {
+      "cash": 200,
+      "currency": "CAD"
+    }
+  ],
+  "/api/v1/accounts/fixture-usd": {
+    "id": "fixture-usd",
+    "name": "USD sample account",
+    "institution_name": "Sample brokerage",
+    "balance": {
+      "total": {
+        "amount": 1200,
+        "currency": "USD"
+      }
+    }
+  },
+  "/api/v1/accounts/fixture-usd/positions/all": {
+    "results": [
+      {
+        "instrument": {
+          "kind": "equity",
+          "id": "same-instrument",
+          "symbol": "SAMPLE-USD",
+          "currency": "USD"
+        },
+        "units": 10,
+        "price": 100,
+        "currency": "USD"
+      }
+    ],
+    "data_freshness": {
+      "as_of": null
+    }
+  },
+  "/api/v1/accounts/fixture-usd/balances": [
+    {
+      "cash": 200,
+      "currency": "USD"
+    }
+  ],
+  "/api/v1/accounts": [
+    {
+      "id": "fixture-cad",
+      "name": "CAD sample account",
+      "institution_name": "Sample brokerage",
+      "balance": {
+        "total": {
+          "amount": 1200,
+          "currency": "CAD"
+        }
+      }
+    },
+    {
+      "id": "fixture-usd",
+      "name": "USD sample account",
+      "institution_name": "Sample brokerage",
+      "balance": {
+        "total": {
+          "amount": 1200,
+          "currency": "USD"
+        }
+      }
+    }
+  ]
+}

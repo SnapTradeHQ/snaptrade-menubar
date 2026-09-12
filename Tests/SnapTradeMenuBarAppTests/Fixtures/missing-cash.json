@@ -1,0 +1,50 @@
+{
+  "/api/v1/authorizations": [
+    {
+      "id": "fixture-connection",
+      "disabled": false
+    }
+  ],
+  "/api/v1/accounts/fixture-cad": {
+    "id": "fixture-cad",
+    "name": "CAD sample account",
+    "institution_name": "Sample brokerage",
+    "balance": {
+      "total": {
+        "amount": 1200,
+        "currency": "CAD"
+      }
+    }
+  },
+  "/api/v1/accounts/fixture-cad/positions/all": {
+    "results": [
+      {
+        "instrument": {
+          "kind": "equity",
+          "id": "sample-CAD",
+          "symbol": "SAMPLE-CAD",
+          "currency": "CAD"
+        },
+        "units": 10,
+        "price": 100,
+        "currency": "CAD"
+      }
+    ],
+    "data_freshness": {
+      "as_of": null
+    }
+  },
+  "/api/v1/accounts": [
+    {
+      "id": "fixture-cad",
+      "name": "CAD sample account",
+      "institution_name": "Sample brokerage",
+      "balance": {
+        "total": {
+          "amount": 1200,
+          "currency": "CAD"
+        }
+      }
+    }
+  ]
+}

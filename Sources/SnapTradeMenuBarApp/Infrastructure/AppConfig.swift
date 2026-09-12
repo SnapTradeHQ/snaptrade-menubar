@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct AppConfig: Codable, Equatable {
     var environment: SnapTradeEnvironment
@@ -12,26 +13,48 @@ struct AppConfig: Codable, Equatable {
     var metadataEndpoint: String
     var apiBaseURL: String
 
-    static func load() -> AppConfig {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let config = try? JSONDecoder().decode(AppConfig.self, from: data) {
-            var loadedConfig = config.withDefaultDemoValues()
-            if !UserDefaults.standard.bool(forKey: hourlyRefreshMigrationKey) {
-                if loadedConfig.refreshInterval == .fifteenMinutes {
-                    loadedConfig.refreshInterval = .oneHour
-                    loadedConfig.save()
-                }
-                UserDefaults.standard.set(true, forKey: hourlyRefreshMigrationKey)
-            }
-            return loadedConfig.withEnvironmentOverrides()
+    // Set only after verifying a claimed production public-native OAuth application.
+    static let productionClientID: String? = "JSuxSu887CLm80FO3lgqmN-32FsGtD1X"
+    static let legacyTestClientID = "OqgWgrKIfojI7ZhONa0xe8fRuqMuvKKE7Grn3H5r"
+
+    static func load(defaults: UserDefaults = .standard,
+                     environment: [String: String] = ProcessInfo.processInfo.environment,
+                     productionClientID: String? = AppConfig.productionClientID) -> AppConfig {
+        let saved = defaults.data(forKey: storageKey)
+            .flatMap { try? JSONDecoder().decode(AppConfig.self, from: $0) }
+        var config = saved ?? AppConfig.defaults
+        if let productionClientID, !productionClientID.isEmpty,
+           config.environment == .production,
+           config.authorizationEndpoint == SnapTradeEnvironment.production.defaultAuthorizationEndpoint,
+           config.tokenEndpoint == SnapTradeEnvironment.production.defaultTokenEndpoint,
+           config.metadataEndpoint == SnapTradeEnvironment.production.defaultMetadataEndpoint,
+           config.apiBaseURL == SnapTradeEnvironment.production.defaultAPIBaseURL,
+           config.clientID.isEmpty || config.clientID == legacyTestClientID {
+            config.clientID = productionClientID
         }
-        UserDefaults.standard.set(true, forKey: hourlyRefreshMigrationKey)
-        return AppConfig.defaults.withDefaultDemoValues().withEnvironmentOverrides()
+        if config.clientID.isEmpty { config.clientID = productionClientID ?? defaultClientID }
+        config.redirectMode = .fixed18787
+        if !defaults.bool(forKey: hourlyRefreshMigrationKey) {
+            if config.refreshInterval == .fifteenMinutes { config.refreshInterval = .oneHour }
+            defaults.set(true, forKey: hourlyRefreshMigrationKey)
+        }
+        // Persist the base configuration, never temporary process overrides.
+        config.save(defaults: defaults)
+        return config.withEnvironmentOverrides(environment)
     }
 
-    func save() {
+    func save(defaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(self) else { return }
-        UserDefaults.standard.set(data, forKey: Self.storageKey)
+        defaults.set(data, forKey: Self.storageKey)
+    }
+
+    // Bind both tokens and cached portfolios to the complete OAuth/API context.
+    // Old environment-only storage is deliberately never imported or deleted.
+    var sessionStorageID: String {
+        let context = [environment.rawValue, clientID, authorizationEndpoint, tokenEndpoint,
+                       revokeEndpoint, metadataEndpoint, apiBaseURL, scope, redirectMode.rawValue]
+        let data = try! JSONEncoder().encode(context)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     func authorizationURL() throws -> URL {
@@ -48,9 +71,8 @@ struct AppConfig: Codable, Equatable {
         return url
     }
 
-    private func withEnvironmentOverrides() -> AppConfig {
+    private func withEnvironmentOverrides(_ env: [String: String]) -> AppConfig {
         var copy = self
-        let env = ProcessInfo.processInfo.environment
         copy.clientID = env["SNAPTRADE_CLIENT_ID"] ?? clientID
         copy.authorizationEndpoint = env["SNAPTRADE_AUTHORIZE_URL"] ?? authorizationEndpoint
         copy.tokenEndpoint = env["SNAPTRADE_TOKEN_URL"] ?? tokenEndpoint
@@ -58,15 +80,6 @@ struct AppConfig: Codable, Equatable {
         copy.metadataEndpoint = env["SNAPTRADE_OAUTH_METADATA_URL"] ?? metadataEndpoint
         copy.apiBaseURL = env["SNAPTRADE_API_BASE_URL"] ?? apiBaseURL
         copy.scope = env["SNAPTRADE_SCOPE"] ?? scope
-        return copy
-    }
-
-    private func withDefaultDemoValues() -> AppConfig {
-        var copy = self
-        if copy.clientID.isEmpty {
-            copy.clientID = Self.defaultClientID
-        }
-        copy.redirectMode = .fixed18787
         return copy
     }
 
@@ -87,7 +100,7 @@ struct AppConfig: Codable, Equatable {
 
     private static let storageKey = "SnapTradeMenuBar.AppConfig.v1"
     private static let hourlyRefreshMigrationKey = "SnapTradeMenuBar.HourlyRefreshMigration.v1"
-    private static let defaultClientID = "OqgWgrKIfojI7ZhONa0xe8fRuqMuvKKE7Grn3H5r"
+    private static let defaultClientID = productionClientID ?? legacyTestClientID
 
     static let defaults = AppConfig(
         environment: .production,

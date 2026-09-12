@@ -4,6 +4,42 @@ import Testing
 
 struct ModelsTests {
     @Test
+    func missingCADPriceDoesNotBlockCompleteUSDSubtotal() throws {
+        let positions = try JSONDecoder().decode([SnapTradePosition].self, from: Data(#"[{"instrument":{"kind":"equity","id":"cad","symbol":"CAD","currency":"CAD"},"units":2,"currency":"CAD"},{"instrument":{"kind":"equity","id":"usd","symbol":"USD","currency":"USD"},"units":3,"price":100,"currency":"USD"}]"#.utf8))
+        let balances = try JSONDecoder().decode([MoneyValue].self, from: Data(#"[{"cash":50,"currency":"USD"}]"#.utf8))
+        let inputs = [AccountValuationInput(positions: positions, balances: balances, accountCurrency: "CAD")]
+        #expect(PortfolioValueCalculator.total(accounts: inputs, currency: "CAD") == nil)
+        #expect(PortfolioValueCalculator.total(accounts: inputs, currency: "USD") == 350)
+    }
+
+    @Test
+    func currencyVisibilityRequiresEitherNonzeroValue() {
+        let cases: [(Decimal?, Decimal?, Bool)] = [
+            (nil, nil, false), (0, nil, false), (nil, 0, false), (0, 0, false),
+            (100, nil, true), (nil, 100, true), (100, 0, true), (0, 100, true),
+            (-100, 0, true), (0, -100, true), (100, -100, true)
+        ]
+        for (reported, calculated, visible) in cases {
+            let total = PortfolioCurrencyTotal(currency: "CAD", brokerReported: reported, calculated: calculated)
+            #expect(total.hasNonzeroValue == visible)
+        }
+    }
+
+    @Test
+    func calculatesCADPositionsAndCashInTheirNativeCurrency() throws {
+        let url = Bundle.module.url(forResource: "cad", withExtension: "json", subdirectory: "Fixtures")!
+        let responses = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        let positionsResponse = responses["/api/v1/accounts/fixture-cad/positions/all"] as! [String: Any]
+        let positions = try JSONDecoder().decode([SnapTradePosition].self, from:
+            JSONSerialization.data(withJSONObject: positionsResponse["results"]!))
+        let balances = try JSONDecoder().decode([MoneyValue].self, from:
+            JSONSerialization.data(withJSONObject: responses["/api/v1/accounts/fixture-cad/balances"]!))
+        let inputs = [AccountValuationInput(positions: positions, balances: balances)]
+        #expect(PortfolioValueCalculator.total(accounts: inputs, currency: "CAD") == 1200)
+        #expect(PortfolioValueCalculator.total(accounts: inputs, currency: "USD") == 0)
+    }
+
+    @Test
     func authorizationDecodesIDAndDisabledState() throws {
         let data = Data(#"{"id":"connection-123","disabled":true}"#.utf8)
 

@@ -2,7 +2,9 @@ import SwiftUI
 
 struct PortfolioMenuView: View {
     @ObservedObject var viewModel: PortfolioViewModel
+    @ObservedObject var updater: AppUpdater
     var close: () -> Void = {}
+    @State private var showsTotalsExplanation = false
 
     private let panelWidth: CGFloat = 340
     private let dashboardURL = URL(string: "https://dashboard.snaptrade.com/")!
@@ -17,6 +19,7 @@ struct PortfolioMenuView: View {
         }
         .padding(16)
         .frame(width: panelWidth, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder
@@ -28,7 +31,13 @@ struct PortfolioMenuView: View {
                         Text("SnapTrade Portfolio")
                             .font(.headline)
                     }
-                    subtitleView
+                    if viewModel.isPreview {
+                        Text("Sample portfolio · No live accounts")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        subtitleView
+                    }
                 }
             }
             Spacer()
@@ -206,7 +215,7 @@ struct PortfolioMenuView: View {
         case .disconnected:
             disconnectedPrompt
         case .loading:
-            EmptyView()
+            if let snapshot = viewModel.partialSnapshot { partialPortfolio(snapshot) }
         case .connected(let snapshot):
             portfolio(snapshot)
         case .stale(let snapshot, let message):
@@ -214,8 +223,22 @@ struct PortfolioMenuView: View {
             portfolio(snapshot)
         case .reconnectNeeded(let message):
             errorBanner(title: "SnapTrade reconnect needed", message: message)
+            if let snapshot = viewModel.partialSnapshot { partialPortfolio(snapshot) }
         case .error(let message):
             errorBanner(title: "Refresh failed", message: message)
+            if let snapshot = viewModel.partialSnapshot { partialPortfolio(snapshot) }
+        }
+    }
+
+    private func partialPortfolio(_ snapshot: PortfolioSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Partial portfolio · \(viewModel.partialAccountCount) of \(viewModel.totalAccountCount) accounts loaded")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            portfolio(snapshot)
+            if !viewModel.isRefreshing {
+                Button("Retry sync") { Task { await viewModel.refreshNow() } }
+            }
         }
     }
 
@@ -249,34 +272,58 @@ struct PortfolioMenuView: View {
     private func portfolio(_ snapshot: PortfolioSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Total Assets")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack(alignment: .top, spacing: 14) {
-                    totalAssetMetric(
-                        label: "Broker reported",
-                        value: snapshot.formattedTotal,
-                        accessibilityValue: snapshot.formattedTotal
-                    )
-
-                    totalAssetMetric(
-                        label: "Calculated",
-                        value: snapshot.formattedCalculatedTotal ?? "Unavailable",
-                        accessibilityValue: snapshot.formattedCalculatedTotal ?? "Unavailable"
-                    )
+                HStack(spacing: 4) {
+                    Text(viewModel.partialSnapshot == nil ? "Total Assets" : "Total Assets (partial)")
+                    Button {
+                        showsTotalsExplanation.toggle()
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("About portfolio totals")
+                    .popover(isPresented: $showsTotalsExplanation, arrowEdge: .top) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("About portfolio totals")
+                                .font(.headline)
+                            Text("Broker totals use account reporting currencies. Calculated totals use holdings and cash currencies. No currency conversion applied.")
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(16)
+                        .frame(width: 280)
+                    }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-                if let difference = snapshot.formattedCalculatedDifference {
-                    Text("Difference \(difference)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Difference between calculated and broker reported total")
-                        .accessibilityValue(difference)
-                } else {
-                    Text("Calculated value needs complete USD position and cash data")
+                ForEach(snapshot.visibleCurrencyTotals) { total in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(total.currency)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        HStack(alignment: .top, spacing: 14) {
+                            let reported = total.brokerReported.map { CurrencyFormatter.format($0, currency: total.currency) } ?? "Unavailable"
+                            let calculated = total.calculated.map { CurrencyFormatter.format($0, currency: total.currency) } ?? "Unavailable"
+                            totalAssetMetric(label: (total.missingAccountCount ?? 0) > 0 && total.brokerReported != nil ? "Broker reported (partial)" : "Broker reported", value: reported, accessibilityValue: reported)
+                            totalAssetMetric(label: "Calculated", value: calculated, accessibilityValue: calculated)
+                        }
+                        if let reason = total.comparisonUnavailableReason {
+                            Text(reason)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if let missing = snapshot.missingAccountTotalCount, missing > 0 {
+                    Text("Totals incomplete: \(missing) account\(missing == 1 ? " is" : "s are") missing a broker-reported value.")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
+                } else if snapshot.visibleCurrencyTotals.isEmpty {
+                    Text("No nonzero totals to show.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -297,7 +344,14 @@ struct PortfolioMenuView: View {
                     if snapshot.positions.isEmpty {
                         accountList(snapshot.accounts)
                     } else {
-                        positionList(snapshot.positions)
+                        ForEach(Array(Set(snapshot.positions.map(\.currency))).sorted(), id: \.self) { currency in
+                            if snapshot.hasMultipleCurrencies {
+                                Text(currency)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            positionList(snapshot.positions.filter { $0.currency == currency })
+                        }
                     }
                 }
             }
@@ -447,7 +501,7 @@ struct PortfolioMenuView: View {
     }
 
     private var canRefresh: Bool {
-        if viewModel.isRefreshing { return false }
+        if viewModel.isPreview || viewModel.isRefreshing { return false }
         switch viewModel.state {
         case .connected, .stale, .error:
             return true
@@ -458,68 +512,80 @@ struct PortfolioMenuView: View {
 
     @ViewBuilder
     private var menuActions: some View {
-        switch viewModel.state {
-        case .disconnected:
-            Button("Relaunch") {
-                viewModel.relaunch()
-            }
-            Button("Quit") {
-                NSApp.terminate(nil)
-            }
-        case .connected, .stale, .error:
-            Button("Refresh") {
-                Task { await viewModel.refreshNow() }
-            }
-            Button("Reconnect SnapTrade") {
+        if updater.isAvailable {
+            Button("Check for Updates…") {
                 closeMenu()
-                Task { await viewModel.reconnect() }
+                updater.checkForUpdates()
             }
+            .disabled(!updater.canCheckForUpdates)
             Divider()
-            Button("Disconnect", role: .destructive) {
-                closeMenu()
-                Task {
-                    await viewModel.disconnect()
+        }
+        if viewModel.isPreview {
+            Button("Quit preview") { NSApp.terminate(nil) }
+        } else {
+            switch viewModel.state {
+            case .disconnected:
+                Button("Relaunch") {
+                    viewModel.relaunch()
                 }
-            }
-            Divider()
-            Button("Relaunch") {
-                viewModel.relaunch()
-            }
-            Button("Quit") {
-                NSApp.terminate(nil)
-            }
-        case .reconnectNeeded:
-            Button("Reconnect SnapTrade") {
-                closeMenu()
-                Task { await viewModel.reconnect() }
-            }
-            Divider()
-            Button("Disconnect", role: .destructive) {
-                closeMenu()
-                Task {
-                    await viewModel.disconnect()
+                Button("Quit") {
+                    NSApp.terminate(nil)
                 }
-            }
-            Divider()
-            Button("Relaunch") {
-                viewModel.relaunch()
-            }
-            Button("Quit") {
-                NSApp.terminate(nil)
-            }
-        case .loading:
-            Button("Disconnect", role: .destructive) {
-                closeMenu()
-                Task {
-                    await viewModel.disconnect()
+            case .connected, .stale, .error:
+                Button("Refresh") {
+                    Task { await viewModel.refreshNow() }
                 }
-            }
-            Divider()
-            Button("Relaunch") {
-                viewModel.relaunch()
-            }
-            Button("Quit") {
-                NSApp.terminate(nil)
+                Button("Reconnect SnapTrade") {
+                    closeMenu()
+                    Task { await viewModel.reconnect() }
+                }
+                Divider()
+                Button("Disconnect", role: .destructive) {
+                    closeMenu()
+                    Task {
+                        await viewModel.disconnect()
+                    }
+                }
+                Divider()
+                Button("Relaunch") {
+                    viewModel.relaunch()
+                }
+                Button("Quit") {
+                    NSApp.terminate(nil)
+                }
+            case .reconnectNeeded:
+                Button("Reconnect SnapTrade") {
+                    closeMenu()
+                    Task { await viewModel.reconnect() }
+                }
+                Divider()
+                Button("Disconnect", role: .destructive) {
+                    closeMenu()
+                    Task {
+                        await viewModel.disconnect()
+                    }
+                }
+                Divider()
+                Button("Relaunch") {
+                    viewModel.relaunch()
+                }
+                Button("Quit") {
+                    NSApp.terminate(nil)
+                }
+            case .loading:
+                Button("Disconnect", role: .destructive) {
+                    closeMenu()
+                    Task {
+                        await viewModel.disconnect()
+                    }
+                }
+                Divider()
+                Button("Relaunch") {
+                    viewModel.relaunch()
+                }
+                Button("Quit") {
+                    NSApp.terminate(nil)
+                }
             }
         }
     }

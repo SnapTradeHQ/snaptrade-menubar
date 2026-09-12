@@ -13,17 +13,22 @@ NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-}"
 APPLE_ID="${APPLE_ID:-}"
 TEAM_ID="${TEAM_ID:-}"
 APP_SPECIFIC_PASSWORD="${APP_SPECIFIC_PASSWORD:-}"
+RELEASE_NOTES="${RELEASE_NOTES:-}"
+SPARKLE_ACCOUNT="com.snaptrade.menubar"
+UPDATES_DIR="$ARTIFACTS_DIR/updates"
 SKIP_NOTARIZE=0
 UNSIGNED=0
+BETA=0
+GENERATE_FEED=0
 
 usage() {
   cat <<'USAGE'
-Usage: Scripts/release_app.sh [--skip-notarize] [--unsigned]
+Usage: Scripts/release_app.sh [--skip-notarize] [--unsigned] [--beta]
 
 Creates a release .dmg for SnapTrade Menu Bar.
 
 Environment:
-  DEVELOPER_ID_APPLICATION   Required unless --unsigned. Example:
+  DEVELOPER_ID_APPLICATION   Required unless --unsigned or --beta. Example:
                              Developer ID Application: SnapTrade Inc. (TEAMID)
 
   NOTARYTOOL_PROFILE         Preferred notarization auth. Created with:
@@ -32,10 +37,13 @@ Environment:
   APPLE_ID                   Alternative notarization auth Apple ID.
   TEAM_ID                    Alternative notarization auth Team ID.
   APP_SPECIFIC_PASSWORD      Alternative notarization auth app-specific password.
+  RELEASE_NOTES             Required HTML or Markdown release notes for a published update.
 
 Options:
   --skip-notarize            Build, sign, and package the .dmg without notarizing.
-  --unsigned                 Build an unsigned local-test .dmg. Not suitable for users.
+  --unsigned                 Build a local-test .dmg with updates disabled.
+  --beta                     Build an ad hoc signed beta with Sparkle-signed updates.
+                             No Apple Developer ID or notarization required.
 USAGE
 }
 
@@ -43,6 +51,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-notarize)
       SKIP_NOTARIZE=1
+      ;;
+    --beta)
+      BETA=1
       ;;
     --unsigned)
       UNSIGNED=1
@@ -60,6 +71,18 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ "$BETA" -eq 1 && ( "$UNSIGNED" -eq 1 || "$SKIP_NOTARIZE" -eq 1 ) ]]; then
+  echo "--beta cannot be combined with --unsigned or --skip-notarize." >&2
+  exit 2
+fi
+if [[ "$BETA" -eq 1 || ( "$UNSIGNED" -eq 0 && "$SKIP_NOTARIZE" -eq 0 ) ]]; then
+  GENERATE_FEED=1
+fi
+if [[ "$GENERATE_FEED" -eq 1 && ! -f "$RELEASE_NOTES" ]]; then
+  echo "Set RELEASE_NOTES to an HTML or Markdown release notes file." >&2
+  exit 1
+fi
 
 require_tool() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -81,8 +104,24 @@ VERSION="$(plist_value CFBundleShortVersionString)"
 BUILD="$(plist_value CFBundleVersion)"
 DMG_NAME="SnapTradeMenuBar-$VERSION-$BUILD.dmg"
 DMG_PATH="$ARTIFACTS_DIR/$DMG_NAME"
+if [[ "$GENERATE_FEED" -eq 1 && -e "$UPDATES_DIR/$DMG_NAME" ]]; then
+  echo "Update $DMG_NAME already exists. Increment CFBundleVersion before releasing." >&2
+  exit 1
+fi
 
-if [[ "$UNSIGNED" -eq 0 ]]; then
+# A runtime override does not change the client ID shipped to users.
+# Fail closed until the repository contains a verified production registration.
+if [[ "$UNSIGNED" -eq 0 ]] && ! grep -Eq 'static let productionClientID: String\? = "[^"]+"' "$ROOT_DIR/Sources/SnapTradeMenuBarApp/Infrastructure/AppConfig.swift"; then
+  echo "Production OAuth registration is not configured. No distributable release can be prepared." >&2
+  echo "Verify a public native production client and exact loopback callback first." >&2
+  exit 1
+fi
+
+if [[ "$UNSIGNED" -eq 0 && "$BETA" -eq 0 ]]; then
+  if [[ "$SKIP_NOTARIZE" -eq 0 && ! -f "$RELEASE_NOTES" ]]; then
+    echo "Set RELEASE_NOTES to an HTML or Markdown release notes file." >&2
+    exit 1
+  fi
   if [[ -z "$SIGN_IDENTITY" ]]; then
     echo "DEVELOPER_ID_APPLICATION is required for a distributable release." >&2
     echo "Available code-signing identities:" >&2
@@ -109,17 +148,39 @@ fi
 echo "Building $APP_NAME $VERSION ($BUILD)..."
 "$ROOT_DIR/Scripts/package_app.sh" release >/dev/null
 
+if [[ "$GENERATE_FEED" -eq 1 ]]; then
+  PUBLIC_KEY="$("$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/generate_keys" --account "$SPARKLE_ACCOUNT" -p)"
+  if [[ "$PUBLIC_KEY" != "$(plist_value SUPublicEDKey)" ]]; then
+    echo "The Sparkle signing key does not match Bundle/Info.plist." >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$ARTIFACTS_DIR"
 
-if [[ "$UNSIGNED" -eq 0 ]]; then
+if [[ "$UNSIGNED" -eq 0 && "$BETA" -eq 0 ]]; then
   echo "Signing app with $SIGN_IDENTITY..."
+  SPARKLE_FRAMEWORK="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Installer.xpc"
+  codesign --force --options runtime --timestamp --preserve-metadata=entitlements --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Downloader.xpc"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK"
   codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 
   echo "Verifying app signature..."
-  codesign --verify --strict --verbose=2 "$APP_DIR"
-  spctl --assess --type execute --verbose "$APP_DIR"
+  codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 else
-  echo "Skipping signing. This artifact is only for local testing."
+  if [[ "$UNSIGNED" -eq 1 ]]; then
+    # Local-only packages do not participate in the beta update feed.
+    /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP_DIR/Contents/Info.plist"
+  fi
+  # Swift's linker signature covers the executable, not the assembled bundle.
+  # Seal the complete bundle so quarantined test installs have a valid ad hoc
+  # signature rather than failing integrity checks as a damaged application.
+  echo "Applying an ad hoc signature for internal testing (no Developer ID)."
+  codesign --force --sign - "$APP_DIR"
+  codesign --verify --strict --verbose=2 "$APP_DIR"
 fi
 
 echo "Creating dmg..."
@@ -129,7 +190,7 @@ ditto "$APP_DIR" "$STAGING_DIR/$APP_NAME.app"
 ln -s /Applications "$STAGING_DIR/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null
 
-if [[ "$UNSIGNED" -eq 0 ]]; then
+if [[ "$UNSIGNED" -eq 0 && "$BETA" -eq 0 ]]; then
   echo "Signing dmg..."
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
 
@@ -148,9 +209,22 @@ if [[ "$UNSIGNED" -eq 0 ]]; then
     echo "Stapling notarization ticket..."
     xcrun stapler staple "$DMG_PATH"
     xcrun stapler validate "$DMG_PATH"
+    spctl --assess --type execute --verbose "$APP_DIR"
   else
     echo "Skipping notarization."
   fi
+fi
+
+if [[ "$GENERATE_FEED" -eq 1 ]]; then
+  mkdir -p "$UPDATES_DIR"
+  cp "$DMG_PATH" "$UPDATES_DIR/$DMG_NAME"
+  cp "$RELEASE_NOTES" "$UPDATES_DIR/${DMG_NAME%.dmg}.${RELEASE_NOTES##*.}"
+  "$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/generate_appcast" \
+    --account "$SPARKLE_ACCOUNT" \
+    --download-url-prefix "https://menubar.snaptrade.com/updates/" \
+    --release-notes-url-prefix "https://menubar.snaptrade.com/updates/" \
+    "$UPDATES_DIR"
+  echo "Update feed and signed downloads: $UPDATES_DIR"
 fi
 
 echo "Release artifact:"

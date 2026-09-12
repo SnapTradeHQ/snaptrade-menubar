@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class StatusItemController: NSObject {
     private let viewModel: PortfolioViewModel
+    private let updater: AppUpdater
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var cancellables: Set<AnyCancellable> = []
@@ -14,14 +15,20 @@ final class StatusItemController: NSObject {
 
     private let popoverWidth: CGFloat = 340
 
-    init(viewModel: PortfolioViewModel) {
+    init(viewModel: PortfolioViewModel, updater: AppUpdater) {
         self.viewModel = viewModel
+        self.updater = updater
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
         configureStatusButton()
         configurePopover()
         updateStatusButton()
+
+        viewModel.$partialSnapshot
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.resizeVisiblePopoverAfterLayout() }
+            .store(in: &cancellables)
 
         viewModel.$state
             .receive(on: DispatchQueue.main)
@@ -57,6 +64,16 @@ final class StatusItemController: NSObject {
             statusItem.length = NSStatusItem.squareLength
             button.attributedTitle = NSAttributedString(string: "")
         }
+        #if DEBUG
+        statusItem.length = NSStatusItem.variableLength
+        let title = NSMutableAttributedString(string: viewModel.isPreview ? "SAMPLE " : "TEST ", attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        title.append(button.attributedTitle)
+        button.attributedTitle = title
+        button.toolTip = "SnapTrade Menu Bar Test · \(viewModel.menuBarTitle)"
+        #endif
     }
 
     private func currentDailyMovementLabel() -> NSAttributedString? {
@@ -68,7 +85,7 @@ final class StatusItemController: NSObject {
             return nil
         }
 
-        guard let dayChangePercent = snapshot.dayChangePercent else { return nil }
+        guard !snapshot.hasMultipleCurrencies, let dayChangePercent = snapshot.dayChangePercent else { return nil }
         let isGain = dayChangePercent >= Decimal(0)
         let magnitude = isGain ? dayChangePercent : dayChangePercent * Decimal(-1)
         let formattedPercent = PercentFormatter.format(magnitude)
@@ -107,11 +124,14 @@ final class StatusItemController: NSObject {
         guard let button = statusItem.button else { return }
         installPopoverContent()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // Opening the panel should not select its first button. Tab can still
+        // move focus into the controls and display the normal keyboard focus ring.
+        hostingController?.view.window?.makeFirstResponder(nil)
         startEventMonitoring()
     }
 
     private func installPopoverContent() {
-        let rootView = PortfolioMenuView(viewModel: viewModel) { [weak self] in
+        let rootView = PortfolioMenuView(viewModel: viewModel, updater: updater) { [weak self] in
             self?.closePopover()
         }
         let hostingController = NSHostingController(rootView: rootView)

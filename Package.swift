@@ -10,15 +10,21 @@ let package = Package(
     products: [
         .executable(name: "SnapTradeMenuBar", targets: ["SnapTradeMenuBarApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
+    ],
     targets: [
         .executableTarget(
             name: "SnapTradeMenuBarApp",
-            path: "Sources/SnapTradeMenuBarApp"
+            dependencies: [.product(name: "Sparkle", package: "Sparkle")],
+            path: "Sources/SnapTradeMenuBarApp",
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
         .testTarget(
             name: "SnapTradeMenuBarAppTests",
             dependencies: ["SnapTradeMenuBarApp"],
-            path: "Tests/SnapTradeMenuBarAppTests"
+            path: "Tests/SnapTradeMenuBarAppTests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

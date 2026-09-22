@@ -7,7 +7,7 @@ struct PortfolioMenuView: View {
     @State private var showsTotalsExplanation = false
 
     private let panelWidth: CGFloat = 340
-    private let dashboardURL = URL(string: "https://dashboard.snaptrade.com/")!
+    private let connectionsURL = URL(string: "https://my.snaptrade.com/")!
 
     var body: some View {
         VStack(alignment: .leading, spacing: contentSpacing) {
@@ -157,7 +157,7 @@ struct PortfolioMenuView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button {
-                    NSWorkspace.shared.open(dashboardURL)
+                    openConnections()
                 } label: {
                     Text("\(disabledConnections) disabled")
                         .font(.caption.weight(.semibold))
@@ -165,7 +165,7 @@ struct PortfolioMenuView: View {
                 .buttonStyle(.plain)
                 .focusable(false)
                 .foregroundStyle(.link)
-                    .help("Open SnapTrade dashboard")
+                .help("Manage connections on my.snaptrade.com")
             }
         }
         .lineLimit(1)
@@ -523,6 +523,10 @@ struct PortfolioMenuView: View {
         if viewModel.isPreview {
             Button("Quit preview") { NSApp.terminate(nil) }
         } else {
+            Button("Add or Remove Connections…") {
+                openConnections()
+            }
+            Divider()
             switch viewModel.state {
             case .disconnected:
                 Button("Relaunch") {
@@ -588,6 +592,11 @@ struct PortfolioMenuView: View {
                 }
             }
         }
+    }
+
+    private func openConnections() {
+        closeMenu()
+        NSWorkspace.shared.open(connectionsURL)
     }
 
     private func closeMenu() {

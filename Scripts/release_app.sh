@@ -221,8 +221,8 @@ if [[ "$GENERATE_FEED" -eq 1 ]]; then
   cp "$RELEASE_NOTES" "$UPDATES_DIR/${DMG_NAME%.dmg}.${RELEASE_NOTES##*.}"
   "$ROOT_DIR/.build/artifacts/sparkle/Sparkle/bin/generate_appcast" \
     --account "$SPARKLE_ACCOUNT" \
-    --download-url-prefix "https://menubar.snaptrade.com/updates/" \
-    --release-notes-url-prefix "https://menubar.snaptrade.com/updates/" \
+    --download-url-prefix "https://menubar.snaptra.de/updates/" \
+    --release-notes-url-prefix "https://menubar.snaptra.de/updates/" \
     "$UPDATES_DIR"
   echo "Update feed and signed downloads: $UPDATES_DIR"
 fi

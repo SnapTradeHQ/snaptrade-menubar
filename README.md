@@ -88,13 +88,13 @@ Production builds include Sparkle with **Check for Updates…** in the actions m
 See [UPDATES.md](UPDATES.md) for update signing, feed publication, and the initial
 manual upgrade. Debug/Test builds do not check for production updates.
 
-The app uses SwiftUI `MenuBarExtra`, authorization code + PKCE, a loopback callback server, Keychain token storage, and `URLSession` for API calls.
+The app uses an AppKit status item and popover, authorization code + PKCE, a loopback callback server, Keychain token storage, and `URLSession` for API calls.
 
 Debug builds store OAuth tokens in app preferences to avoid repeated macOS Keychain prompts after every unsigned rebuild. Release builds use macOS Keychain.
 
 ## Configuration
 
-The app does not expose editable settings. Developers can override build defaults with environment variables:
+The app offers display preferences for the menu bar and portfolio totals. Developers can override service defaults with environment variables:
 
 - `SNAPTRADE_CLIENT_ID`
 - `SNAPTRADE_AUTHORIZE_URL`

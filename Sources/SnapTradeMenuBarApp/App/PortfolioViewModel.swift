@@ -73,16 +73,14 @@ final class PortfolioViewModel: ObservableObject {
         }
     }
 
-    var menuBarSystemImage: String {
+    var menuBarSystemImage: String? {
         switch state {
-        case .connected:
-            return "dollarsign.circle"
         case .stale, .error, .reconnectNeeded:
             return "exclamationmark.triangle"
         case .loading:
             return "arrow.triangle.2.circlepath"
-        case .disconnected:
-            return "dollarsign.circle"
+        case .connected, .disconnected:
+            return nil
         }
     }
 

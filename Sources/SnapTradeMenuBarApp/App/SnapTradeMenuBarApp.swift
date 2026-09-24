@@ -6,7 +6,7 @@ struct SnapTradeMenuBarApp: App {
 
     var body: some Scene {
         Settings {
-            EmptyView()
+            MenuBarSettingsView(preferences: appDelegate.displayPreferences)
         }
         .commands {
             CommandGroup(replacing: .appSettings) { }

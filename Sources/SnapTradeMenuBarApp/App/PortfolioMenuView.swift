@@ -3,6 +3,8 @@ import SwiftUI
 struct PortfolioMenuView: View {
     @ObservedObject var viewModel: PortfolioViewModel
     @ObservedObject var updater: AppUpdater
+    @ObservedObject var displayPreferences: StatusDisplayPreferences
+    var openSettings: () -> Void = {}
     var close: () -> Void = {}
     @State private var showsTotalsExplanation = false
 
@@ -248,7 +250,7 @@ struct PortfolioMenuView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Connect your portfolio")
                         .font(.headline)
-                    Text("View total assets from the menu bar.")
+                    Text("See your portfolio from the menu bar.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -287,7 +289,7 @@ struct PortfolioMenuView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("About portfolio totals")
                                 .font(.headline)
-                            Text("Broker totals use account reporting currencies. Calculated totals use holdings and cash currencies. No currency conversion applied.")
+                            Text("Broker reported totals come from connected accounts. Calculated totals use holdings and cash. They can differ, and no currency conversion is applied.")
                                 .font(.callout)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -300,16 +302,27 @@ struct PortfolioMenuView: View {
 
                 ForEach(snapshot.visibleCurrencyTotals) { total in
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(total.currency)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        if snapshot.hasMultipleCurrencies {
+                            Text(total.currency)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
                         HStack(alignment: .top, spacing: 14) {
                             let reported = total.brokerReported.map { CurrencyFormatter.format($0, currency: total.currency) } ?? "Unavailable"
-                            let calculated = total.calculated.map { CurrencyFormatter.format($0, currency: total.currency) } ?? "Unavailable"
-                            totalAssetMetric(label: (total.missingAccountCount ?? 0) > 0 && total.brokerReported != nil ? "Broker reported (partial)" : "Broker reported", value: reported, accessibilityValue: reported)
-                            totalAssetMetric(label: "Calculated", value: calculated, accessibilityValue: calculated)
+                            let isPartial = (total.missingAccountCount ?? 0) > 0 && total.brokerReported != nil
+                            totalAssetMetric(
+                                label: isPartial ? "Broker reported (partial)" : "Broker reported",
+                                value: reported,
+                                accessibilityValue: reported,
+                                prominent: displayPreferences.totalMode == .brokerReported,
+                                showsLabel: displayPreferences.totalMode == .both || isPartial || total.brokerReported == nil
+                            )
+                            if displayPreferences.totalMode == .both {
+                                let calculated = total.calculated.map { CurrencyFormatter.format($0, currency: total.currency) } ?? "Unavailable"
+                                totalAssetMetric(label: "Calculated", value: calculated, accessibilityValue: calculated)
+                            }
                         }
-                        if let reason = total.comparisonUnavailableReason {
+                        if displayPreferences.totalMode == .both, let reason = total.comparisonUnavailableReason {
                             Text(reason)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -361,15 +374,19 @@ struct PortfolioMenuView: View {
     private func totalAssetMetric(
         label: String,
         value: String,
-        accessibilityValue: String
+        accessibilityValue: String,
+        prominent: Bool = false,
+        showsLabel: Bool = true
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if showsLabel {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
             Text(value)
-                .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
+                .font(.system(size: prominent ? 24 : 20, weight: .semibold, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
         }
@@ -473,124 +490,68 @@ struct PortfolioMenuView: View {
             if isLoading {
                 ProgressView()
                     .controlSize(.small)
-            } else if canRefresh {
-                Button {
-                    Task { await viewModel.refreshNow() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .imageScale(.medium)
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .help("Refresh portfolio")
             }
 
-            Menu {
-                menuActions
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .imageScale(.large)
-                    .frame(width: 24, height: 24)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .focusable(false)
-            .fixedSize()
-            .help("Actions")
+            ActionsMenuButton(items: actionMenuItems)
+                .frame(width: 24, height: 24)
+                .help("Actions")
         }
     }
 
-    private var canRefresh: Bool {
-        if viewModel.isPreview || viewModel.isRefreshing { return false }
-        switch viewModel.state {
-        case .connected, .stale, .error:
-            return true
-        case .disconnected, .loading, .reconnectNeeded:
-            return false
-        }
-    }
-
-    @ViewBuilder
-    private var menuActions: some View {
+    private var actionMenuItems: [ActionsMenuButton.Item] {
+        var items: [ActionsMenuButton.Item] = [
+            .action("Settings…") { openSettings() },
+            .separator,
+        ]
         if updater.isAvailable {
-            Button("Check for Updates…") {
+            items.append(.action("Check for Updates…", enabled: updater.canCheckForUpdates) {
                 closeMenu()
                 updater.checkForUpdates()
-            }
-            .disabled(!updater.canCheckForUpdates)
-            Divider()
+            })
+            items.append(.separator)
         }
         if viewModel.isPreview {
-            Button("Quit preview") { NSApp.terminate(nil) }
-        } else {
-            Button("Add or Remove Connections…") {
-                openConnections()
-            }
-            Divider()
-            switch viewModel.state {
-            case .disconnected:
-                Button("Relaunch") {
-                    viewModel.relaunch()
-                }
-                Button("Quit") {
-                    NSApp.terminate(nil)
-                }
-            case .connected, .stale, .error:
-                Button("Refresh") {
-                    Task { await viewModel.refreshNow() }
-                }
-                Button("Reconnect SnapTrade") {
-                    closeMenu()
-                    Task { await viewModel.reconnect() }
-                }
-                Divider()
-                Button("Disconnect", role: .destructive) {
-                    closeMenu()
-                    Task {
-                        await viewModel.disconnect()
-                    }
-                }
-                Divider()
-                Button("Relaunch") {
-                    viewModel.relaunch()
-                }
-                Button("Quit") {
-                    NSApp.terminate(nil)
-                }
-            case .reconnectNeeded:
-                Button("Reconnect SnapTrade") {
-                    closeMenu()
-                    Task { await viewModel.reconnect() }
-                }
-                Divider()
-                Button("Disconnect", role: .destructive) {
-                    closeMenu()
-                    Task {
-                        await viewModel.disconnect()
-                    }
-                }
-                Divider()
-                Button("Relaunch") {
-                    viewModel.relaunch()
-                }
-                Button("Quit") {
-                    NSApp.terminate(nil)
-                }
-            case .loading:
-                Button("Disconnect", role: .destructive) {
-                    closeMenu()
-                    Task {
-                        await viewModel.disconnect()
-                    }
-                }
-                Divider()
-                Button("Relaunch") {
-                    viewModel.relaunch()
-                }
-                Button("Quit") {
-                    NSApp.terminate(nil)
-                }
-            }
+            items.append(.action("Quit preview") { NSApp.terminate(nil) })
+            return items
+        }
+
+        items.append(.action("Add or Remove Connections…") { openConnections() })
+        items.append(.separator)
+        switch viewModel.state {
+        case .disconnected:
+            break
+        case .connected, .stale, .error:
+            items.append(.action("Refresh") {
+                Task { await viewModel.refreshNow() }
+            })
+            items.append(.action("Reconnect SnapTrade") {
+                closeMenu()
+                Task { await viewModel.reconnect() }
+            })
+            items.append(.separator)
+            items.append(disconnectAction)
+            items.append(.separator)
+        case .reconnectNeeded:
+            items.append(.action("Reconnect SnapTrade") {
+                closeMenu()
+                Task { await viewModel.reconnect() }
+            })
+            items.append(.separator)
+            items.append(disconnectAction)
+            items.append(.separator)
+        case .loading:
+            items.append(disconnectAction)
+            items.append(.separator)
+        }
+        items.append(.action("Relaunch") { viewModel.relaunch() })
+        items.append(.action("Quit") { NSApp.terminate(nil) })
+        return items
+    }
+
+    private var disconnectAction: ActionsMenuButton.Item {
+        .action("Disconnect") {
+            closeMenu()
+            Task { await viewModel.disconnect() }
         }
     }
 

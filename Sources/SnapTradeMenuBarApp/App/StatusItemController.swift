@@ -6,18 +6,22 @@ import SwiftUI
 final class StatusItemController: NSObject {
     private let viewModel: PortfolioViewModel
     private let updater: AppUpdater
+    private let displayPreferences: StatusDisplayPreferences
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var cancellables: Set<AnyCancellable> = []
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
     private var hostingController: NSHostingController<PortfolioMenuView>?
+    private var settingsWindow: NSWindow?
+    private var expandedSessionBeganAt: TimeInterval = 0
 
     private let popoverWidth: CGFloat = 340
 
-    init(viewModel: PortfolioViewModel, updater: AppUpdater) {
+    init(viewModel: PortfolioViewModel, updater: AppUpdater, displayPreferences: StatusDisplayPreferences) {
         self.viewModel = viewModel
         self.updater = updater
+        self.displayPreferences = displayPreferences
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -37,29 +41,51 @@ final class StatusItemController: NSObject {
                 self?.resizeVisiblePopoverAfterLayout()
             }
             .store(in: &cancellables)
+
+        displayPreferences.$mode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                // Published values arrive before the property changes.
+                DispatchQueue.main.async { self?.updateStatusButton() }
+            }
+            .store(in: &cancellables)
     }
 
     private func configureStatusButton() {
         guard let button = statusItem.button else { return }
-        button.target = self
-        button.action = #selector(togglePopover)
+        if #available(macOS 27.0, *) {
+            statusItem.expandedInterfaceDelegate = self
+        } else {
+            button.target = self
+            button.action = #selector(togglePopover)
+        }
         button.imagePosition = .imageLeft
     }
 
     private func configurePopover() {
-        popover.behavior = .transient
+        popover.behavior = .applicationDefined
         popover.animates = false
         popover.delegate = self
     }
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        button.image = NSImage(systemSymbolName: viewModel.menuBarSystemImage, accessibilityDescription: nil)
+        button.image = viewModel.menuBarSystemImage.flatMap {
+            NSImage(systemSymbolName: $0, accessibilityDescription: nil)
+        }
         button.toolTip = viewModel.menuBarTitle
 
-        if let movement = currentDailyMovementLabel() {
+        if let movement = currentStatusLabel() {
             statusItem.length = NSStatusItem.variableLength
             button.attributedTitle = movement
+        } else if button.image == nil {
+            statusItem.length = NSStatusItem.variableLength
+            let fallback: String
+            switch viewModel.state {
+            case .disconnected: fallback = "Connect"
+            default: fallback = "—"
+            }
+            button.attributedTitle = NSAttributedString(string: fallback)
         } else {
             statusItem.length = NSStatusItem.squareLength
             button.attributedTitle = NSAttributedString(string: "")
@@ -76,7 +102,7 @@ final class StatusItemController: NSObject {
         #endif
     }
 
-    private func currentDailyMovementLabel() -> NSAttributedString? {
+    private func currentStatusLabel() -> NSAttributedString? {
         let snapshot: PortfolioSnapshot
         switch viewModel.state {
         case .connected(let current), .stale(let current, _):
@@ -85,17 +111,30 @@ final class StatusItemController: NSObject {
             return nil
         }
 
-        guard !snapshot.hasMultipleCurrencies, let dayChangePercent = snapshot.dayChangePercent else { return nil }
-        let isGain = dayChangePercent >= Decimal(0)
-        let magnitude = isGain ? dayChangePercent : dayChangePercent * Decimal(-1)
-        let formattedPercent = PercentFormatter.format(magnitude)
+        guard !snapshot.hasMultipleCurrencies else { return nil }
+        switch displayPreferences.mode {
+        case .portfolioValue:
+            guard snapshot.missingAccountTotalCount == 0 || snapshot.missingAccountTotalCount == nil,
+                  snapshot.totalsByCurrency.count == 1,
+                  let total = snapshot.totalsByCurrency.first,
+                  let value = total.brokerReported else { return nil }
+            return NSAttributedString(string: CurrencyFormatter.format(value, currency: total.currency), attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ])
+        case .dailyPercent:
+            break
+        }
+        guard let dayChangePercent = snapshot.dayChangePercent else { return nil }
+        let isGain = dayChangePercent > Decimal(0)
+        let isLoss = dayChangePercent < Decimal(0)
         let prefix = marketSessionPrefix(for: snapshot)
-        let label = "\(prefix)\(isGain ? "+" : "-")\(formattedPercent)"
+        let label = StatusChangeLabel.format(dayChangePercent, prefix: prefix)
 
         return NSAttributedString(
             string: label,
             attributes: [
-                .foregroundColor: isGain ? NSColor.systemGreen : NSColor.systemRed,
+                .foregroundColor: isGain ? NSColor.systemGreen : (isLoss ? NSColor.systemRed : NSColor.labelColor),
                 .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
             ]
         )
@@ -131,7 +170,9 @@ final class StatusItemController: NSObject {
     }
 
     private func installPopoverContent() {
-        let rootView = PortfolioMenuView(viewModel: viewModel, updater: updater) { [weak self] in
+        let rootView = PortfolioMenuView(viewModel: viewModel, updater: updater, displayPreferences: displayPreferences, openSettings: { [weak self] in
+            self?.showSettings()
+        }) { [weak self] in
             self?.closePopover()
         }
         let hostingController = NSHostingController(rootView: rootView)
@@ -141,8 +182,35 @@ final class StatusItemController: NSObject {
     }
 
     private func closePopover() {
+        if #available(macOS 27.0, *), let session = statusItem.expandedInterfaceSession {
+            session.cancel()
+        } else {
+            dismissPopover()
+        }
+    }
+
+    private func dismissPopover() {
         popover.performClose(nil)
         stopEventMonitoring()
+    }
+
+    private func showSettings() {
+        closePopover()
+        if settingsWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 140),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "SnapTrade Menu Bar Settings"
+            window.contentView = NSHostingView(rootView: MenuBarSettingsView(preferences: displayPreferences))
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func startEventMonitoring() {
@@ -150,21 +218,54 @@ final class StatusItemController: NSObject {
 
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
-        ) { [weak self] _ in
+        ) { [weak self] event in
             Task { @MainActor in
-                self?.closePopover()
+                guard let self else { return }
+                if self.isStatusButtonClick(event) {
+                    if self.isSecondStatusButtonClick(event) { self.closePopover() }
+                } else {
+                    self.closePopover()
+                }
             }
         }
 
         localEventMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown]
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
         ) { [weak self] event in
-            if event.keyCode == 53 {
-                self?.closePopover()
-                return nil
+            guard let self else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 {
+                    self.closePopover()
+                    return nil
+                }
+            } else if self.isStatusButtonClick(event) {
+                if self.isSecondStatusButtonClick(event) {
+                    self.closePopover()
+                    return nil
+                }
+            } else if event.window !== self.popover.contentViewController?.view.window {
+                self.closePopover()
             }
             return event
         }
+    }
+
+    private func isSecondStatusButtonClick(_ event: NSEvent) -> Bool {
+        guard #available(macOS 27.0, *),
+              popover.isShown,
+              event.timestamp >= expandedSessionBeganAt else { return false }
+        return true
+    }
+
+    private func isStatusButtonClick(_ event: NSEvent) -> Bool {
+        guard event.type != .keyDown,
+              let button = statusItem.button,
+              let window = button.window else { return false }
+        // Status item clicks can arrive through either event monitor. Compare
+        // screen coordinates because the event may belong to another window.
+        let clickPoint = event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
+        let buttonFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return buttonFrame.contains(clickPoint)
     }
 
     private func stopEventMonitoring() {
@@ -197,7 +298,22 @@ final class StatusItemController: NSObject {
 extension StatusItemController: NSPopoverDelegate {
     nonisolated func popoverDidClose(_ notification: Notification) {
         Task { @MainActor in
+            if #available(macOS 27.0, *), let session = statusItem.expandedInterfaceSession {
+                session.cancel()
+            }
             stopEventMonitoring()
         }
+    }
+}
+
+@available(macOS 27.0, *)
+extension StatusItemController: @MainActor NSStatusItemExpandedInterfaceDelegate {
+    func statusItem(_ statusItem: NSStatusItem, didBegin session: NSStatusItemExpandedInterfaceSession) {
+        expandedSessionBeganAt = ProcessInfo.processInfo.systemUptime
+        showPopover()
+    }
+
+    func statusItemDidEndExpandedInterfaceSession(_ statusItem: NSStatusItem, animated: Bool) {
+        dismissPopover()
     }
 }

@@ -20,7 +20,7 @@ manual installation still requires the macOS security exception.
   `com.snaptrade.menubar`. Its public key is committed in `Bundle/Info.plist`.
   The private key must stay out of source control and website hosting. Preserve
   it in a secure backup before moving or wiping the release machine.
-- A working public feed at `https://menubar.snaptrade.com/updates/appcast.xml`.
+- A working public feed at `https://menubar.snaptra.de/updates/appcast.xml`.
 
 The release script checks that the local signing key matches the bundled public
 key and generates an EdDSA-signed update entry for both beta and notarized
@@ -39,8 +39,10 @@ before the app and waits for notarization to succeed.
    ```sh
    export DEVELOPER_ID_APPLICATION="Developer ID Application: SnapTrade Inc. (TEAMID)"
    export NOTARYTOOL_PROFILE="snaptrade-notary"
-   export RELEASE_NOTES="$PWD/ReleaseNotes/0.1.1.md"
-   Scripts/release_app.sh
+   export RELEASE_NOTES="$PWD/ReleaseNotes/<new-version>.md"
+   export MENU_BAR_SITE_CHECKOUT="/path/to/current/MenuBar/Sites/checkout"
+   export MENU_BAR_TAP_CHECKOUT="/path/to/SnapTradeHQ/homebrew-tap"
+   Scripts/release_app.sh --stage-distribution
    ```
 
    For the current beta, use this instead (no Apple credentials):
@@ -52,16 +54,22 @@ before the app and waits for notarization to succeed.
 4. The script writes the DMG, notes, `appcast.xml`, and any generated deltas into
    `.build/release-artifacts/updates/`. Keep that directory between releases, or
    restore the previously published files first, to retain update history.
-5. Publish that directory under `/updates/` on the existing MenuBar website.
-   For the Sites project in `Website/`, stage the files into
-   `Website/dist/updates/` and deploy through its normal Sites hosting workflow.
-   Publish the downloads before the feed, or deploy them atomically. Update the
-   website's manual download link to the same signed release. Do not upload
-   `old_updates/` or unsigned test artifacts.
-6. Fetch the live feed and referenced files to confirm they are publicly
-   accessible over HTTPS. Test an actual older signed app updating to the new
-   signed app, including relaunch and retention of sign-in. Local compilation
-   alone does not validate installation, notarization, or live hosting.
+5. `--stage-distribution` requires clean, current checkouts of the MenuBar Sites
+   source and `SnapTradeHQ/homebrew-tap`. It copies appcast-referenced assets
+   into the Site, writes the DMG checksum file, changes both website download
+   buttons and their version label, and updates the cask. It refuses to replace
+   a published release filename with different bytes. It never publishes or
+   pushes either checkout, and ignores `old_updates/` and unreferenced files.
+6. Review and publish the Site through its normal Sites hosting workflow. The
+   appcast and DMG must become live together. Fetch the live feed and new DMG
+   to confirm HTTPS availability and that the DMG SHA-256 matches the staged
+   cask. Check `ruby -c Casks/menubar.rb` in the tap checkout, then commit and
+   push the cask. Run `brew update`, `brew audit --cask --strict
+   snaptradehq/tap/menubar`, and `brew fetch --cask snaptradehq/tap/menubar`
+   against the published tap. Keep the prior DMGs hosted for older Sparkle clients.
+7. Test an older signed app updating to the new signed app, including relaunch
+   and retention of sign-in. Local compilation alone does not validate
+   installation, notarization, or live hosting.
 
 `--beta` generates a Sparkle-signed update feed without Apple notarization.
 `--unsigned` and `--skip-notarize` never generate a publishable update feed.

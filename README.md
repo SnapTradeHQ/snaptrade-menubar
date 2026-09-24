@@ -64,8 +64,10 @@ certificate and run:
 ```sh
 export DEVELOPER_ID_APPLICATION="Developer ID Application: SnapTrade Inc. (TEAMID)"
 export NOTARYTOOL_PROFILE="snaptrade-notary"
-export RELEASE_NOTES="$PWD/ReleaseNotes/0.1.1.md"
-Scripts/release_app.sh
+export RELEASE_NOTES="$PWD/ReleaseNotes/<new-version>.md"
+export MENU_BAR_SITE_CHECKOUT="/path/to/current/MenuBar/Sites/checkout"
+export MENU_BAR_TAP_CHECKOUT="/path/to/SnapTradeHQ/homebrew-tap"
+Scripts/release_app.sh --stage-distribution
 ```
 
 Create the notary profile once with:
@@ -76,7 +78,11 @@ xcrun notarytool store-credentials snaptrade-notary
 
 The release script builds the app, signs it with hardened runtime, creates a
 `.dmg`, submits it for notarization, staples the notarization ticket, and writes
-the final artifact to `.build/release-artifacts/`.
+the final artifact to `.build/release-artifacts/`. With `--stage-distribution`,
+it also stages the signed downloads and feed in the current Sites checkout,
+updates both website download links and the checksum label, and updates the
+Homebrew cask version and checksum. Publish the Site and verify the live DMG
+before pushing the cask. See [UPDATES.md](UPDATES.md) for the release order.
 
 Production builds include Sparkle with **Check for Updates…** in the actions menu.
 See [UPDATES.md](UPDATES.md) for update signing, feed publication, and the initial

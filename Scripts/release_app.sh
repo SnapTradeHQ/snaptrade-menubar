@@ -20,10 +20,11 @@ SKIP_NOTARIZE=0
 UNSIGNED=0
 BETA=0
 GENERATE_FEED=0
+STAGE_DISTRIBUTION=0
 
 usage() {
   cat <<'USAGE'
-Usage: Scripts/release_app.sh [--skip-notarize] [--unsigned] [--beta]
+Usage: Scripts/release_app.sh [--skip-notarize] [--unsigned] [--beta] [--stage-distribution]
 
 Creates a release .dmg for SnapTrade Menu Bar.
 
@@ -38,12 +39,16 @@ Environment:
   TEAM_ID                    Alternative notarization auth Team ID.
   APP_SPECIFIC_PASSWORD      Alternative notarization auth app-specific password.
   RELEASE_NOTES             Required HTML or Markdown release notes for a published update.
+  MENU_BAR_SITE_CHECKOUT    Current Sites source checkout for --stage-distribution.
+  MENU_BAR_TAP_CHECKOUT     SnapTradeHQ/homebrew-tap checkout for --stage-distribution.
 
 Options:
   --skip-notarize            Build, sign, and package the .dmg without notarizing.
   --unsigned                 Build a local-test .dmg with updates disabled.
   --beta                     Build an ad hoc signed beta with Sparkle-signed updates.
                              No Apple Developer ID or notarization required.
+  --stage-distribution       Update the Site assets/download links and Homebrew cask
+                             after a signed, notarized release. Does not publish them.
 USAGE
 }
 
@@ -58,6 +63,9 @@ while [[ $# -gt 0 ]]; do
     --unsigned)
       UNSIGNED=1
       SKIP_NOTARIZE=1
+      ;;
+    --stage-distribution)
+      STAGE_DISTRIBUTION=1
       ;;
     -h|--help)
       usage
@@ -75,6 +83,23 @@ done
 if [[ "$BETA" -eq 1 && ( "$UNSIGNED" -eq 1 || "$SKIP_NOTARIZE" -eq 1 ) ]]; then
   echo "--beta cannot be combined with --unsigned or --skip-notarize." >&2
   exit 2
+fi
+if [[ "$STAGE_DISTRIBUTION" -eq 1 ]]; then
+  if [[ "$BETA" -eq 1 || "$UNSIGNED" -eq 1 || "$SKIP_NOTARIZE" -eq 1 ]]; then
+    echo "--stage-distribution requires a signed, notarized release." >&2
+    exit 2
+  fi
+  if [[ -z "${MENU_BAR_SITE_CHECKOUT:-}" || -z "${MENU_BAR_TAP_CHECKOUT:-}" ]]; then
+    echo "Set MENU_BAR_SITE_CHECKOUT and MENU_BAR_TAP_CHECKOUT for --stage-distribution." >&2
+    exit 2
+  fi
+  for CHECKOUT in "$MENU_BAR_SITE_CHECKOUT" "$MENU_BAR_TAP_CHECKOUT"; do
+    if ! git -C "$CHECKOUT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
+       [[ -n "$(git -C "$CHECKOUT" status --porcelain)" ]]; then
+      echo "Distribution checkout must be a clean Git working tree: $CHECKOUT" >&2
+      exit 2
+    fi
+  done
 fi
 if [[ "$BETA" -eq 1 || ( "$UNSIGNED" -eq 0 && "$SKIP_NOTARIZE" -eq 0 ) ]]; then
   GENERATE_FEED=1
@@ -225,6 +250,15 @@ if [[ "$GENERATE_FEED" -eq 1 ]]; then
     --release-notes-url-prefix "https://menubar.snaptra.de/updates/" \
     "$UPDATES_DIR"
   echo "Update feed and signed downloads: $UPDATES_DIR"
+fi
+
+if [[ "$STAGE_DISTRIBUTION" -eq 1 ]]; then
+  python3 "$ROOT_DIR/Scripts/stage_public_release.py" \
+    --site "$MENU_BAR_SITE_CHECKOUT" \
+    --tap "$MENU_BAR_TAP_CHECKOUT" \
+    --artifacts "$ARTIFACTS_DIR" \
+    --info-plist "$PLIST" \
+    --require-clean
 fi
 
 echo "Release artifact:"

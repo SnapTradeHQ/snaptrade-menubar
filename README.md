@@ -2,6 +2,9 @@
 
 A native macOS menu bar app for SnapTrade Personal OAuth portfolio viewing.
 
+Download the signed macOS app from [menubar.snaptra.de](https://menubar.snaptra.de/).
+The app requires macOS 14 or later and a SnapTrade account.
+
 ## Build
 
 ```sh
@@ -38,10 +41,8 @@ separately by currency, with no exchange-rate conversion or combined daily retur
 Calculated totals sum holdings and cash in each native currency across all accounts.
 Missing amounts prevent a complete calculated total for the affected currency.
 
-Production OAuth is configured with the verified public-native MenuBar client.
-See [PRODUCTION_ROLLOUT.md](PRODUCTION_ROLLOUT.md) for the verified prerequisites,
-migration behavior, and exact challenge enrollment procedure. Signed release packaging
-fails closed while `AppConfig.productionClientID` is unset.
+Production OAuth uses a public native client with authorization code and PKCE.
+Signed release packaging fails closed while `AppConfig.productionClientID` is unset.
 
 To create a beta with Sparkle-signed updates, without Apple Developer ID:
 
@@ -152,3 +153,15 @@ On first sync, account results appear progressively as a partial portfolio.
 Percentages and daily returns wait until the full sync completes. Later refreshes
 keep the last complete portfolio visible. Partial results are never cached; a
 failed first sync keeps them on screen with a retry action.
+
+## Security
+
+Please report security vulnerabilities privately using the
+[GitHub security advisory form](https://github.com/SnapTradeHQ/snaptrade-menubar/security/advisories/new).
+See [SECURITY.md](SECURITY.md) for details.
+
+## License
+
+The source code and repository assets are licensed under the
+[Apache License 2.0](LICENSE). The license does not grant permission to use
+SnapTrade names or trademarks to imply endorsement of a modified app.
